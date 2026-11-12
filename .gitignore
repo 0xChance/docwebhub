@@ -1,0 +1,11 @@
+# Build output
+/build/
+/dist/
+
+# Generated viewer assets (created by build.sh)
+/internal/office/assets.zip
+/internal/office/assets.version
+/internal/cad/assets.zip
+/internal/cad/assets.version
+
+.DS_Store

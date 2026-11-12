@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>docWebHub · Office preview</title>
+<style>
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: #fff;
+    color: #1c1c1e;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Toolbar ------------------------------------------------------------- */
+  #toolbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 5px 8px;
+    background: #fafafa;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    user-select: none;
+  }
+  #toolbar[hidden] { display: none; }
+
+  #toolbar button {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #333;
+    cursor: pointer;
+  }
+  #toolbar button:hover { background: rgba(0, 0, 0, 0.07); }
+  #toolbar button:active { background: rgba(0, 0, 0, 0.12); }
+  #toolbar button:focus-visible { outline: 2px solid #0a84ff; outline-offset: 1px; }
+  #toolbar button svg { width: 16px; height: 16px; display: block; }
+
+  #zoom-level {
+    min-width: 46px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: #444;
+  }
+
+  .sep { width: 1px; height: 18px; background: rgba(0, 0, 0, 0.12); margin: 0 5px; }
+  .spacer { flex: 1; }
+
+  #page-label {
+    color: rgba(0, 0, 0, 0.55);
+    font-variant-numeric: tabular-nums;
+    padding-right: 2px;
+  }
+  #page-label[hidden] { display: none; }
+
+  #export-status {
+    color: rgba(0, 0, 0, 0.55);
+    font-variant-numeric: tabular-nums;
+    padding-right: 4px;
+  }
+  #export-status[hidden] { display: none; }
+  #export-status.failed { color: #a32d2d; }
+
+  #toolbar button[disabled] { opacity: 0.4; cursor: default; }
+  #toolbar button[disabled]:hover { background: transparent; }
+
+  /* Page thumbnails ----------------------------------------------------- */
+  #body { flex: 1; min-height: 0; display: flex; }
+
+  #thumbs {
+    display: none;
+    flex: none;
+    width: 104px;
+    box-sizing: border-box;
+    padding: 8px 7px 4px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: #f7f7f7;
+    border-right: 1px solid rgba(0, 0, 0, 0.1);
+  }
+  #thumbs.on { display: block; }
+
+  .thumb {
+    display: block;
+    width: 100%;
+    margin: 0 0 9px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    font: inherit;
+  }
+  .thumb canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    min-height: 40px;
+    box-sizing: border-box;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.14);
+    border-radius: 2px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.07);
+  }
+  .thumb:not(.ready) canvas { background: repeating-linear-gradient(45deg, #fff, #fff 6px, #f2f2f2 6px, #f2f2f2 12px); }
+  .thumb span {
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    line-height: 1.4;
+    text-align: center;
+    color: rgba(0, 0, 0, 0.5);
+  }
+  .thumb:hover canvas { border-color: rgba(0, 0, 0, 0.3); }
+  .thumb.active canvas { outline: 2px solid #0a84ff; outline-offset: 1px; border-color: transparent; }
+  .thumb.active span { color: #0a84ff; font-weight: 600; }
+  .thumb:focus-visible { outline: none; }
+  .thumb:focus-visible canvas { outline: 2px solid #0a84ff; outline-offset: 2px; }
+
+  #viewer { flex: 1; min-width: 0; min-height: 0; position: relative; }
+
+  /* Offscreen host used to render each page once for the thumbnail strip. It
+     must stay rendered, so it is moved out of view instead of hidden. */
+  #hidden { position: fixed; left: -4000px; top: 0; width: 200px; height: 300px; overflow: auto; }
+</style>
+</head>
+<body data-version="{{.Version}}" data-page-label="{{.PageLabel}}" data-pages-label="{{.PagesLabel}}"
+      data-export-pdf="{{.ExportPdf}}" data-exporting="{{.Exporting}}" data-export-failed="{{.ExportFailed}}">
+<div id="toolbar" hidden>
+  <button id="zoom-out" type="button" title="{{.ZoomOut}}" aria-label="{{.ZoomOut}}">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3.5 8h9"/></svg>
+  </button>
+  <span id="zoom-level">100%</span>
+  <button id="zoom-in" type="button" title="{{.ZoomIn}}" aria-label="{{.ZoomIn}}">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
+  </button>
+  <span class="sep"></span>
+  <button id="fit-width" type="button" title="{{.FitWidth}}" aria-label="{{.FitWidth}}">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5v6M14 5v6M4.5 8h7"/><path d="M6 6.5 4.5 8 6 9.5M10 6.5 11.5 8 10 9.5"/></svg>
+  </button>
+  <button id="fit-page" type="button" title="{{.FitPage}}" aria-label="{{.FitPage}}">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="2.5" width="9" height="11" rx="1"/><path d="M6 5.5h4M6 8h4M6 10.5h2.5"/></svg>
+  </button>
+  <span class="spacer"></span>
+  <span id="page-label" hidden></span>
+  <span id="export-status" role="status" aria-live="polite" hidden></span>
+  <button id="export" type="button" title="{{.ExportPdf}}" aria-label="{{.ExportPdf}}" hidden>
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v7"/><path d="M5 6.75 8 9.75l3-3"/><path d="M3.5 11.5v1.5h9v-1.5"/></svg>
+  </button>
+</div>
+<div id="body">
+  <div id="thumbs" role="list"></div>
+  <div id="viewer"></div>
+</div>
+<div id="hidden"></div>
+<script type="module">
+// Runs inside an iframe. The document bytes arrive over postMessage and nothing
+// else is fetched from the site. The frame is same-origin because the parser
+// needs a Worker, which an opaque origin cannot load — see docs/office-preview.md.
+const VERSION = document.body.dataset.version || '';
+const PAGE_LABEL = document.body.dataset.pageLabel || 'Page %d';
+const PAGES_LABEL = document.body.dataset.pagesLabel || '';
+
+const CJK_FALLBACK = {
+  'zh-CN': 'sc',
+  'zh-TW': 'tc',
+  'ja': 'jp',
+  'ko': 'kr',
+}[document.documentElement.lang] || 'auto';
+
+// zoom/pages say which upstream callbacks the format answers; thumbs says the
+// document has pages worth previewing (the spreadsheet viewer has neither).
+const FORMATS = {
+  docx: { module: './docx.mjs', viewer: 'DocxScrollViewer', zoom: true, visible: 'onVisiblePageChange', thumbs: true },
+  xlsx: { module: './xlsx.mjs', viewer: 'XlsxViewer' },
+  pptx: { module: './pptx.mjs', viewer: 'PptxScrollViewer', zoom: true, visible: 'onVisibleSlideChange' },
+  doc: { module: './docx.mjs', viewer: 'DocxScrollViewer', legacy: './legacy/doc.mjs', option: 'legacyDoc', zoom: true, visible: 'onVisiblePageChange', thumbs: true },
+  xls: { module: './xlsx.mjs', viewer: 'XlsxViewer', legacy: './legacy/xls.mjs', option: 'legacyXls' },
+  ppt: { module: './pptx.mjs', viewer: 'PptxScrollViewer', legacy: './legacy/ppt.mjs', option: 'legacyPpt', zoom: true, visible: 'onVisibleSlideChange' },
+};
+
+// The upstream error codes are more precise than anything we can show, so they
+// are collapsed into the handful of messages the parent page translates.
+const ERROR_CODES = {
+  'encrypted': 'encrypted',
+  'invalid-password': 'encrypted',
+  'unsupported-encryption': 'encrypted',
+  'not-ooxml': 'not-ooxml',
+  'unsupported-content': 'unsupported',
+  'legacy-binary-format': 'legacy-missing',
+};
+
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 4;
+const THUMB_LIMIT = 150;
+
+// Offscreen raster width for the thumbnail strip; each frame is then scaled
+// down into the rail.
+const THUMB_WIDTH = 200;
+
+// PDF export. EXPORT_PX is how wide a page is rasterised; the page itself is
+// laid out at EXPORT_PAGE_PT, so raising EXPORT_PX only raises the resolution
+// (1240 px over 595 pt is about 150 dpi) and never the paper size.
+const EXPORT_PX = 1240;
+const EXPORT_PAGE_PT = 595;
+const EXPORT_QUALITY = 0.9;
+const EXPORT_LIMIT = THUMB_LIMIT;
+// The parent page re-reads the file for an export; if it never answers, the
+// button has to come back instead of spinning forever.
+const BYTES_TIMEOUT_MS = 30000;
+
+const ASCII = new TextEncoder();
+
+const state = { viewer: null, format: '', total: 0, current: 0, laidOut: false, thumbs: false, exporting: false, name: '' };
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+
+async function waitUntil(predicate, timeout) {
+  const started = performance.now();
+  while (!predicate()) {
+    if (performance.now() - started > timeout) return false;
+    await sleep(40);
+  }
+  return true;
+}
+
+function post(message, transfer) {
+  parent.postMessage(message, '*', transfer || []);
+}
+
+function collapse(error) {
+  return ERROR_CODES[error && error.code] || 'failed';
+}
+
+function setScaleLabel(scale) {
+  document.getElementById('zoom-level').textContent = Math.round(scale * 100) + '%';
+}
+
+function setPageLabel(top, total, layoutComplete) {
+  state.total = total;
+  state.current = top;
+  if (layoutComplete) state.laidOut = true;
+  const label = document.getElementById('page-label');
+  if (total > 0) {
+    label.hidden = false;
+    label.textContent = (top + 1) + ' / ' + total;
+  }
+  markActiveThumb();
+}
+
+// --- thumbnail strip ----------------------------------------------------
+
+function thumbNode(index) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'thumb';
+  button.dataset.page = String(index);
+  button.title = PAGE_LABEL.replace('%d', String(index + 1));
+  button.setAttribute('role', 'listitem');
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 2;
+  canvas.height = 3;
+  button.appendChild(canvas);
+
+  const number = document.createElement('span');
+  number.textContent = String(index + 1);
+  button.appendChild(number);
+
+  button.addEventListener('click', () => {
+    if (state.viewer) state.viewer.scrollToPage(index);
+  });
+  return button;
+}
+
+function markActiveThumb() {
+  const rail = document.getElementById('thumbs');
+  if (!rail.classList.contains('on')) return;
+
+  for (const node of rail.children) {
+    node.classList.toggle('active', Number(node.dataset.page) === state.current);
+  }
+  const active = rail.querySelector('.thumb.active');
+  if (active) active.scrollIntoView({ block: 'nearest' });
+}
+
+function paintThumb(index, source) {
+  const node = document.querySelector('#thumbs .thumb[data-page="' + index + '"]');
+  if (!node) return;
+
+  const canvas = node.querySelector('canvas');
+  const width = 88;
+  const ratio = source.height / source.width || Math.SQRT2;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(width * ratio * dpr);
+  canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+  node.classList.add('ready');
+}
+
+// topCanvas picks the page currently sitting at the top of the hidden viewer.
+function topCanvas(host) {
+  const top = host.getBoundingClientRect().top;
+  let best = null;
+  let bestDelta = Infinity;
+  for (const canvas of host.querySelectorAll('canvas')) {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.bottom < top || rect.top > top + host.clientHeight) continue;
+    const delta = Math.abs(rect.top - top);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = canvas;
+    }
+  }
+  return best;
+}
+
+// renderPages runs a second, offscreen viewer over the same bytes and hands
+// each page's canvas to onPage. It is the one rasteriser both the thumbnail
+// strip and the PDF export use: the strip asks for 88 px, the export for print
+// width, and neither has to know how the viewer paginates.
+//
+// Both jobs need the same offscreen host, so they are queued: a strip still
+// being painted when the export button is pressed finishes first, instead of
+// the two viewers fighting over one container.
+let offscreenQueue = Promise.resolve();
+
+function renderPages(buffer, spec, width, count, onPage) {
+  const run = offscreenQueue.then(
+    () => renderPagesNow(buffer, spec, width, count, onPage),
+    () => renderPagesNow(buffer, spec, width, count, onPage)
+  );
+  offscreenQueue = run.catch(() => {});
+  return run;
+}
+
+async function renderPagesNow(buffer, spec, width, count, onPage) {
+  const host = document.getElementById('hidden');
+  const restore = host.getAttribute('style');
+  // The viewer lays its pages out at the width it is given, so the offscreen
+  // host has to be at least that wide even though nobody is looking at it.
+  host.style.width = width + 'px';
+  host.style.height = '600px';
+
+  let small = null;
+  let visible = 0;
+  try {
+    const core = await import(spec.module);
+    const options = await viewerOptions(spec);
+    Object.assign(options, {
+      width: width,
+      paddingTop: 0,
+      paddingBottom: 0,
+      onVisiblePageChange: (top) => { visible = top; },
+    });
+
+    small = new core[spec.viewer](host, options);
+    await small.load(buffer);
+    await small.waitUntilLayoutComplete();
+    small.fitWidth();
+
+    // Give the first page a moment to paint before the loop starts.
+    await waitUntil(() => topCanvas(host) !== null, 1500);
+
+    for (let i = 0; i < count; i++) {
+      if (i > 0) {
+        visible = -1;
+        small.scrollToPage(i);
+        // The last page cannot align with the top of the viewport, so the
+        // viewer never reports it as the visible one; fall through and take
+        // whichever page sits closest to the top.
+        await waitUntil(() => visible === i, 700);
+      }
+      await frame();
+      await frame();
+      await sleep(20);
+      const source = topCanvas(host);
+      if (!source) continue;
+      await onPage(i, source);
+      if (i % 8 === 7) await sleep(0);
+    }
+  } finally {
+    if (small) small.destroy();
+    host.replaceChildren();
+    if (restore === null) host.removeAttribute('style');
+    else host.setAttribute('style', restore);
+  }
+}
+
+async function buildThumbnails(buffer, spec) {
+  const rail = document.getElementById('thumbs');
+  // The viewer reports the page count as layout progresses (1, 3, 7, … 9), so
+  // wait for the final number before sizing the strip. A document that takes
+  // longer than the wait still gets a strip with the pages known so far.
+  await waitUntil(() => state.laidOut, 8000);
+  if (state.total <= 0) return;
+
+  const shown = Math.min(state.total, THUMB_LIMIT);
+  rail.setAttribute('aria-label', PAGES_LABEL);
+  for (let i = 0; i < shown; i++) rail.appendChild(thumbNode(i));
+  rail.classList.add('on');
+  state.thumbs = true;
+  markActiveThumb();
+
+  try {
+    await renderPages(buffer, spec, THUMB_WIDTH, shown, async (index, source) => {
+      paintThumb(index, source);
+    });
+  } catch (error) {
+    // Thumbnails are a convenience; a failure here must not affect reading.
+  }
+}
+
+// --- zoom ---------------------------------------------------------------
+
+function bindZoom(viewer) {
+  document.getElementById('zoom-out').addEventListener('click', () => viewer.zoomOut());
+  document.getElementById('zoom-in').addEventListener('click', () => viewer.zoomIn());
+  document.getElementById('fit-width').addEventListener('click', () => viewer.fitWidth());
+  document.getElementById('fit-page').addEventListener('click', () => viewer.fitPage());
+
+  document.addEventListener('keydown', (event) => {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      viewer.zoomIn();
+    } else if (event.key === '-' || event.key === '_') {
+      event.preventDefault();
+      viewer.zoomOut();
+    } else if (event.key === '0') {
+      event.preventDefault();
+      viewer.fitWidth();
+    }
+  });
+
+  // Ctrl/Cmd + wheel is the gesture people try first; preventDefault also stops
+  // the browser's own page zoom, which would scale the toolbar with it.
+  document.addEventListener('wheel', (event) => {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    event.preventDefault();
+    const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, viewer.getScale() * factor));
+    viewer.setScale(next);
+  }, { passive: false, capture: true });
+}
+
+// --- PDF export ---------------------------------------------------------
+
+// There is no server side to this: the pages are the very canvases the viewer
+// draws, one JPEG each, wrapped in the smallest PDF a reader will accept.
+// Nothing round-trips to the site except the original bytes, and nothing is
+// written anywhere except the download itself.
+//
+// The result is a picture per page — no selectable text, no search. A document
+// rendered at 150 dpi prints fine and is roughly a third of a megabyte a page;
+// LibreOffice would do better, but it is not something a single binary can
+// promise to find on the host.
+
+const EXPORT_PDF = document.body.dataset.exportPdf || 'Export PDF';
+const EXPORTING = document.body.dataset.exporting || 'Exporting %d / %d';
+const EXPORT_FAILED = document.body.dataset.exportFailed || 'Export failed';
+
+function dataURLToBytes(dataURL) {
+  const binary = atob(dataURL.slice(dataURL.indexOf(',') + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+const point = (value) => value.toFixed(2);
+
+// A PDF is objects plus a table of their byte offsets, so the writer has to
+// count bytes as it goes: the offsets are what a reader seeks to. Every string
+// here is ASCII, so its length in characters is its length in bytes.
+function pdfBytes(pages) {
+  const chunks = [];
+  let offset = 0;
+
+  const write = (part) => {
+    const bytes = typeof part === 'string' ? ASCII.encode(part) : part;
+    chunks.push(bytes);
+    offset += bytes.length;
+  };
+
+  const offsets = [0]; // object 0 is the free entry
+  const begin = () => offsets.push(offset);
+
+  // A reader looks for the header first and for the high-byte comment second;
+  // without them the file is not recognised as a PDF at all.
+  write('%PDF-1.4\n');
+  write(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
+
+  begin();
+  write('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+
+  begin();
+  const kids = pages.map((_, i) => (5 + 3 * i) + ' 0 R').join(' ');
+  write('2 0 obj\n<< /Type /Pages /Kids [' + kids + '] /Count ' + pages.length + ' >>\nendobj\n');
+
+  pages.forEach((page, i) => {
+    const image = 3 + 3 * i;
+    const text = 4 + 3 * i;
+    const sheet = 5 + 3 * i;
+    const width = EXPORT_PAGE_PT;
+    const height = (EXPORT_PAGE_PT * page.height) / page.width;
+    const draw = 'q ' + point(width) + ' 0 0 ' + point(height) + ' 0 0 cm /Im0 Do Q\n';
+
+    // DCTDecode is the JPEG filter: the bytes go in exactly as canvas produced
+    // them, which is what keeps a page to a few hundred kilobytes.
+    begin();
+    write(image + ' 0 obj\n<< /Type /XObject /Subtype /Image /Width ' + page.width +
+      ' /Height ' + page.height + ' /ColorSpace /DeviceRGB /BitsPerComponent 8' +
+      ' /Filter /DCTDecode /Length ' + page.jpeg.length + ' >>\nstream\n');
+    write(page.jpeg);
+    write('\nendstream\nendobj\n');
+
+    begin();
+    write(text + ' 0 obj\n<< /Length ' + ASCII.encode(draw).length + ' >>\nstream\n' + draw + 'endstream\nendobj\n');
+
+    begin();
+    write(sheet + ' 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' +
+      point(width) + ' ' + point(height) + ']' +
+      ' /Resources << /XObject << /Im0 ' + image + ' 0 R >> >>' +
+      ' /Contents ' + text + ' 0 R >>\nendobj\n');
+  });
+
+  const startxref = offset;
+  write('xref\n0 ' + offsets.length + '\n');
+  write('0000000000 65535 f \n');
+  for (let i = 1; i < offsets.length; i++) {
+    // Every entry is 20 bytes: ten for the offset, five for the generation,
+    // one for the type, and two to end the line.
+    write(String(offsets[i]).padStart(10, '0') + ' 00000 n \n');
+  }
+  write('trailer\n<< /Size ' + offsets.length + ' /Root 1 0 R >>\nstartxref\n' +
+    startxref + '\n%%EOF\n');
+
+  const out = new Uint8Array(offset);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.length;
+  }
+  return out;
+}
+
+function pdfName(name) {
+  const base = String(name || 'document').replace(/\.[^./\\]+$/, '');
+  return (base || 'document') + '.pdf';
+}
+
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // Revoked later rather than now: some browsers read the blob asynchronously.
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// The bytes the viewer holds have been transferred into the parser worker, so
+// an export asks the parent page to read the file again. It costs one request
+// per export and keeps a second copy of a 50 MB document out of memory.
+let pendingBytes = null;
+
+function requestBytes() {
+  return new Promise((resolve, reject) => {
+    if (pendingBytes) pendingBytes.reject(new Error('superseded'));
+    pendingBytes = { resolve, reject };
+    post({ lwOffice: 'need-bytes' });
+    setTimeout(() => {
+      if (!pendingBytes) return;
+      pendingBytes.reject(new Error('the listing page did not answer'));
+      pendingBytes = null;
+    }, BYTES_TIMEOUT_MS);
+  });
+}
+
+async function exportPdf() {
+  const button = document.getElementById('export');
+  const status = document.getElementById('export-status');
+  const spec = FORMATS[state.format];
+  if (state.exporting || !spec || !spec.thumbs) return;
+
+  state.exporting = true;
+  button.disabled = true;
+  status.classList.remove('failed');
+  status.hidden = false;
+
+  try {
+    await waitUntil(() => state.laidOut, 8000);
+    const total = Math.min(state.total, EXPORT_LIMIT);
+    if (total <= 0) throw new Error('the document has no pages');
+
+    status.textContent = EXPORTING.replace('%d', '1').replace('%d', String(total));
+    const buffer = await requestBytes();
+
+    const pages = [];
+    await renderPages(buffer, spec, EXPORT_PX, total, async (index, canvas) => {
+      pages.push({
+        jpeg: dataURLToBytes(canvas.toDataURL('image/jpeg', EXPORT_QUALITY)),
+        width: canvas.width,
+        height: canvas.height,
+      });
+      status.textContent = EXPORTING.replace('%d', String(index + 1)).replace('%d', String(total));
+    });
+
+    if (!pages.length) throw new Error('nothing was rendered');
+    download(new Blob([pdfBytes(pages)], { type: 'application/pdf' }), pdfName(state.name));
+    status.textContent = '';
+  } catch (error) {
+    status.textContent = EXPORT_FAILED;
+    status.classList.add('failed');
+  } finally {
+    state.exporting = false;
+    button.disabled = false;
+  }
+}
+
+// --- open ---------------------------------------------------------------
+
+async function viewerOptions(spec) {
+  const options = {
+    cjkFallback: CJK_FALLBACK,
+    progressiveLayout: true,
+    enableTextSelection: true,
+    mode: 'main',
+  };
+  if (spec.legacy) {
+    const legacy = await import(spec.legacy);
+    options[spec.option] = legacy[spec.option];
+  }
+  return options;
+}
+
+async function open(buffer) {
+  const format = (new URLSearchParams(location.search).get('format') || '').toLowerCase();
+  const spec = FORMATS[format];
+  if (!spec) {
+    throw Object.assign(new Error('unknown format: ' + format), { code: 'unsupported-content' });
+  }
+
+  const core = await import(spec.module);
+  const Viewer = core[spec.viewer];
+  if (!Viewer) {
+    throw new Error('viewer class missing: ' + spec.viewer);
+  }
+
+  const options = await viewerOptions(spec);
+  if (spec.zoom) {
+    Object.assign(options, {
+      enableZoom: true,
+      zoomMin: ZOOM_MIN,
+      zoomMax: ZOOM_MAX,
+      refitOnResize: true,
+      onScaleChange: setScaleLabel,
+    });
+  }
+  if (spec.visible) {
+    options[spec.visible] = (top, total, done) => setPageLabel(top, total, done);
+  }
+
+  // load() may transfer the buffer to its parser worker; keep a copy for the
+  // thumbnail pass before that happens.
+  const thumbBuffer = spec.thumbs ? buffer.slice(0) : null;
+
+  const viewer = new Viewer(document.getElementById('viewer'), options);
+  state.viewer = viewer;
+  state.format = format;
+
+  await viewer.load(buffer);
+
+  if (spec.zoom) {
+    document.getElementById('toolbar').hidden = false;
+    setScaleLabel(viewer.getScale());
+    bindZoom(viewer);
+  }
+
+  // Only paginated formats can be exported: the spreadsheet viewer has no page
+  // to speak of, so its toolbar stays without the button.
+  if (spec.thumbs) {
+    const button = document.getElementById('export');
+    button.hidden = false;
+    button.addEventListener('click', exportPdf);
+  }
+
+  if (thumbBuffer) {
+    buildThumbnails(thumbBuffer, spec);
+  }
+}
+
+window.addEventListener('message', async (event) => {
+  const data = event.data;
+  if (!data) return;
+
+  // The answer to a 'need-bytes' request: the same file read again by the
+  // listing page, handed over as a fresh buffer.
+  if (data.lwOffice === 'bytes' && data.buffer) {
+    if (pendingBytes) {
+      pendingBytes.resolve(data.buffer);
+      pendingBytes = null;
+    }
+    return;
+  }
+
+  if (data.lwOffice !== 'open' || !data.buffer) return;
+
+  state.name = data.name || new URLSearchParams(location.search).get('name') || '';
+  try {
+    await open(data.buffer);
+    post({ lwOffice: 'ready', version: VERSION });
+  } catch (error) {
+    post({
+      lwOffice: 'error',
+      code: collapse(error),
+      detail: String((error && error.message) || error),
+    });
+  }
+});
+
+post({ lwOffice: 'hello', version: VERSION });
+</script>
+</body>
+</html>

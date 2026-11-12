@@ -1,0 +1,1194 @@
+<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>{{.DisplayPath}} · docWebHub</title>
+{{if .UpdateData}}<script type="application/json" id="dwh-update-data">{{.UpdateData}}</script>
+{{end}}{{if .UpdateJS}}<script src="{{.UpdateJS}}" defer></script>
+{{end}}<script src="{{.PreviewJS}}" defer></script>
+<style>
+  :root {
+    --bg: #f5f6fa;
+    --bar: rgba(255, 255, 255, 0.82);
+    --card: #ffffff;
+    --line: rgba(15, 23, 42, 0.07);
+    --text: #0f172a;
+    --muted: #64748b;
+    --faint: #94a3b8;
+    --accent: #4f6ef7;
+    --accent-soft: rgba(79, 110, 247, 0.1);
+    --hover: rgba(79, 110, 247, 0.06);
+    --active: rgba(79, 110, 247, 0.12);
+    --code-bg: #f8fafc;
+    --syntax-keyword: #7c3aed;
+    --syntax-string: #047857;
+    --syntax-number: #b45309;
+    --syntax-function: #1d4ed8;
+    --syntax-type: #0e7490;
+    --syntax-tag: #be123c;
+    --syntax-attr: #b45309;
+    --syntax-comment: #94a3b8;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0f1c;
+      --bar: rgba(15, 20, 35, 0.86);
+      --card: #111726;
+      --line: rgba(148, 163, 184, 0.12);
+      --text: #e6ebf5;
+      --muted: #94a3b8;
+      --faint: #64748b;
+      --accent: #93a4ff;
+      --accent-soft: rgba(147, 164, 255, 0.14);
+      --hover: rgba(147, 164, 255, 0.08);
+      --active: rgba(147, 164, 255, 0.16);
+      --code-bg: #0d1322;
+      --syntax-keyword: #c4b5fd;
+      --syntax-string: #86efac;
+      --syntax-number: #fcd34d;
+      --syntax-function: #93c5fd;
+      --syntax-type: #67e8f9;
+      --syntax-tag: #fda4af;
+      --syntax-attr: #fcd34d;
+      --syntax-comment: #64748b;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei UI", "Segoe UI",
+      system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 14px 28px;
+    background: var(--bar);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }
+
+  .brand svg { width: 18px; height: 18px; color: var(--accent); }
+
+  .crumbs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+
+  .crumbs a {
+    color: var(--muted);
+    text-decoration: none;
+    padding: 2px 6px;
+    border-radius: 6px;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .crumbs a:hover { color: var(--accent); background: var(--accent-soft); }
+  .crumbs a:last-of-type { color: var(--text); font-weight: 500; }
+  .crumbs span { color: var(--faint); }
+
+  .count {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+    margin: 0;
+    padding: 20px 28px 48px;
+  }
+
+  /* Only expand the right column once a file is selected, and shrink the left
+     column to a width that still fits file names. */
+  .layout.has-preview {
+    grid-template-columns: minmax(360px, 420px) minmax(0, 1fr);
+  }
+
+  .layout.has-preview td.time,
+  .layout.has-preview thead th.time { display: none; }
+
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 18px 40px -32px rgba(15, 23, 42, 0.45);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  thead th {
+    text-align: left;
+    font-weight: 500;
+    font-size: 12px;
+    letter-spacing: 0.4px;
+    color: var(--faint);
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  thead th.size, thead th.time { text-align: right; }
+
+  tbody td {
+    padding: 9px 18px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--hover); }
+  tbody tr.selected { background: var(--active); }
+  tbody tr.selected td.name a { color: var(--accent); }
+
+  td.name { width: 100%; }
+
+  td.name a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text);
+    text-decoration: none;
+    min-width: 0;
+  }
+
+  td.name a span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .icon {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    color: var(--faint);
+  }
+
+  tr.dir .icon { color: var(--accent); }
+  tr.dir td.name span { font-weight: 500; }
+
+  td.size, td.time {
+    text-align: right;
+    color: var(--muted);
+    font-size: 12.5px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  td.size { width: 96px; }
+  td.time { width: 150px; }
+
+  tr.hidden { opacity: 0.55; }
+
+  .parent a {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+  }
+
+  .parent a:hover { color: var(--accent); }
+
+  .empty {
+    padding: 48px 18px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .more {
+    display: block;
+    width: calc(100% - 36px);
+    margin: 14px 18px 18px;
+    padding: 10px 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .more:hover { background: var(--hover); color: var(--accent); }
+  .more:disabled { cursor: default; opacity: 0.6; }
+
+  .preview {
+    display: none;
+    position: sticky;
+    top: 76px;
+    flex-direction: column;
+    height: calc(100vh - 128px);
+    min-height: 340px;
+  }
+
+  .layout.has-preview .preview { display: flex; }
+
+  .preview-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    min-height: 46px;
+  }
+
+  .preview-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+  }
+
+  .preview-name.ready { color: var(--text); }
+
+  .preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+
+  .preview-actions a,
+  .preview-actions button {
+    font: inherit;
+    font-size: 12px;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 4px 10px;
+    text-decoration: none;
+    cursor: pointer;
+    line-height: 1.4;
+  }
+
+  .preview-actions a:hover,
+  .preview-actions button:hover {
+    color: var(--accent);
+    border-color: var(--accent-soft);
+    background: var(--accent-soft);
+  }
+
+  .preview-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .placeholder {
+    margin: auto;
+    text-align: center;
+    color: var(--faint);
+    padding: 32px 24px;
+  }
+
+  .placeholder svg { width: 40px; height: 40px; opacity: 0.5; }
+  .placeholder p { margin: 12px 0 0; font-size: 13px; }
+  .placeholder p.sub { margin-top: 4px; font-size: 12px; opacity: 0.85; }
+
+  .notice {
+    margin: auto;
+    text-align: center;
+    color: var(--muted);
+    padding: 32px 24px;
+    font-size: 13px;
+  }
+
+  .notice a { color: var(--accent); }
+
+  pre.code {
+    margin: 0;
+    padding: 16px 18px;
+    font-family: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-break: break-word;
+    tab-size: 4;
+    background: var(--code-bg);
+    color: var(--text);
+    min-height: 100%;
+  }
+
+  .token.comment,
+  .token.prolog,
+  .token.doctype,
+  .token.cdata { color: var(--syntax-comment); font-style: italic; }
+  .token.punctuation { color: var(--muted); }
+  .token.namespace { opacity: 0.7; }
+  .token.property,
+  .token.tag,
+  .token.constant,
+  .token.symbol,
+  .token.deleted { color: var(--syntax-tag); }
+  .token.boolean,
+  .token.number { color: var(--syntax-number); }
+  .token.selector,
+  .token.attr-name,
+  .token.string,
+  .token.char,
+  .token.builtin,
+  .token.inserted { color: var(--syntax-string); }
+  .token.operator,
+  .token.entity,
+  .token.url { color: var(--syntax-attr); }
+  .token.atrule,
+  .token.attr-value,
+  .token.keyword { color: var(--syntax-keyword); }
+  .token.function,
+  .token.class-name { color: var(--syntax-function); }
+  .token.regex,
+  .token.important,
+  .token.variable { color: var(--syntax-type); }
+  .token.important,
+  .token.bold { font-weight: 600; }
+  .token.italic { font-style: italic; }
+
+  .markdown {
+    padding: 18px 22px;
+    min-height: 100%;
+    font-size: 13.5px;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+  }
+
+  .markdown > :first-child { margin-top: 0; }
+  .markdown > :last-child { margin-bottom: 0; }
+
+  .markdown h1,
+  .markdown h2,
+  .markdown h3,
+  .markdown h4,
+  .markdown h5,
+  .markdown h6 {
+    margin: 1.3em 0 0.55em;
+    line-height: 1.3;
+    font-weight: 600;
+  }
+
+  .markdown h1 { font-size: 1.55em; }
+  .markdown h2 { font-size: 1.3em; border-bottom: 1px solid var(--line); padding-bottom: 0.25em; }
+  .markdown h3 { font-size: 1.12em; }
+  .markdown h4,
+  .markdown h5,
+  .markdown h6 { font-size: 1em; }
+
+  .markdown p,
+  .markdown ul,
+  .markdown ol,
+  .markdown blockquote,
+  .markdown pre,
+  .markdown table { margin: 0.8em 0; }
+
+  .markdown ul,
+  .markdown ol { padding-left: 1.6em; }
+  .markdown li { margin: 0.2em 0; }
+  .markdown li > ul,
+  .markdown li > ol { margin: 0.2em 0; }
+
+  .markdown a { color: var(--accent); text-decoration: none; }
+  .markdown a:hover { text-decoration: underline; }
+
+  .markdown code {
+    font-family: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+    font-size: 0.9em;
+  }
+
+  .markdown :not(pre) > code {
+    padding: 0.1em 0.35em;
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+  }
+
+  .markdown pre {
+    padding: 12px 14px;
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: auto;
+  }
+
+  .markdown pre code {
+    font-size: 12.5px;
+    line-height: 1.6;
+    white-space: pre;
+  }
+
+  .markdown blockquote {
+    padding: 0.1em 1em;
+    border-left: 3px solid var(--line);
+    color: var(--muted);
+  }
+
+  .markdown hr {
+    margin: 1.4em 0;
+    border: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .markdown img { max-width: 100%; height: auto; border-radius: 6px; }
+
+  .markdown table {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    overflow: auto;
+    border-collapse: collapse;
+  }
+
+  .markdown th,
+  .markdown td {
+    width: auto;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    text-align: left;
+    white-space: normal;
+  }
+
+  .markdown th { background: var(--hover); font-weight: 600; color: var(--text); }
+  .markdown tbody tr:last-child td { border-bottom: 1px solid var(--line); }
+
+  .stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    min-height: 0;
+  }
+
+  .stage img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 8px;
+  }
+
+  iframe.frame {
+    flex: 1;
+    width: 100%;
+    min-height: 320px;
+    border: 0;
+    background: #fff;
+  }
+
+  /* The document viewer is an iframe too, but it must stay invisible until the
+     first page is painted, otherwise the pane flashes white. */
+  .office-stage {
+    position: relative;
+    flex: 1;
+    min-height: 360px;
+    display: flex;
+  }
+
+  .office-stage iframe.frame {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    visibility: hidden;
+  }
+
+  .office-stage iframe.frame.ready { visibility: visible; }
+
+  .office-stage .notice {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+  }
+
+  .media {
+    margin: auto;
+    padding: 24px;
+    width: 100%;
+    max-width: 520px;
+  }
+
+  .media video, .media audio { width: 100%; border-radius: 10px; }
+
+  footer {
+    margin: 0;
+    padding: 0 28px 28px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    color: var(--faint);
+    font-size: 12px;
+  }
+
+  @media (max-width: 980px) {
+    .layout,
+    .layout.has-preview { grid-template-columns: 1fr; padding: 16px 16px 40px; }
+    .preview,
+    .layout.has-preview .preview { display: none; }
+    .bar { padding: 12px 16px; gap: 10px; }
+    footer { padding: 0 16px 24px; }
+    td.time, thead th.time { display: none; }
+  }
+</style>
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.5" />
+        <ellipse cx="12" cy="12" rx="3.6" ry="8.5" />
+        <path d="M3.5 12h17" />
+      </svg>
+      docWebHub
+    </div>
+    <nav class="crumbs" aria-label="Path">
+      {{range $index, $crumb := .Crumbs}}{{if $index}}<span>/</span>{{end}}<a href="{{$crumb.Href}}">{{$crumb.Name}}</a>{{end}}
+    </nav>
+    <div class="count">{{.Summary}}</div>
+  </header>
+
+  <main class="layout" id="layout">
+    <section class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th class="name">{{index .Strings "web.listing.name"}}</th>
+            <th class="size">{{index .Strings "web.listing.size"}}</th>
+            <th class="time">{{index .Strings "web.listing.modified"}}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{if .Parent}}
+          <tr class="parent">
+            <td colspan="3">
+              <a href="{{.Parent}}">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 19V5M5 12l7-7 7 7" />
+                </svg>
+                {{index .Strings "web.listing.up"}}
+              </a>
+            </td>
+          </tr>
+          {{end}}
+
+          {{range .Entries}}{{template "entry-row" .}}{{end}}
+        </tbody>
+      </table>
+
+      {{if .HasMore}}
+      <button class="more" id="listing-more" type="button"
+              data-next="{{.NextPage}}" data-total="{{.Total}}">{{index .Strings "web.listing.more"}}</button>
+      {{end}}
+
+      {{if not .Entries}}
+      <div class="empty">{{index .Strings "web.listing.empty"}}</div>
+      {{end}}
+    </section>
+
+    <aside class="panel preview" id="preview" aria-live="polite">
+      <div class="preview-head">
+        <span class="preview-name" id="preview-name">{{index .Strings "web.listing.preview"}}</span>
+        <div class="preview-actions">
+          <a id="preview-open" href="#" target="_blank" rel="noopener" hidden>{{index .Strings "web.listing.openTab"}}</a>
+          <button id="preview-close" type="button" hidden>{{index .Strings "web.listing.close"}}</button>
+        </div>
+      </div>
+      <div class="preview-body" id="preview-body">
+        <div class="placeholder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M3 9h18M8 4v16" />
+          </svg>
+          <p>{{index .Strings "web.listing.pick"}}</p>
+          <p class="sub">{{index .Strings "web.listing.supports"}}</p>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <span>{{index .Strings "web.listing.footer.brand"}}</span>
+    <span>{{index .Strings "web.listing.footer.hint"}}</span>
+  </footer>
+
+<script>
+window.LWTEXT = {{.StringsJSON}};
+</script>
+<script>
+(function () {
+  var TEXT = window.LWTEXT || {};
+  var layout = document.getElementById('layout');
+  var body = document.getElementById('preview-body');
+  var nameEl = document.getElementById('preview-name');
+  var openLink = document.getElementById('preview-open');
+  var closeBtn = document.getElementById('preview-close');
+  var selectedRow = null;
+  var tbody = document.querySelector('tbody');
+  var more = document.getElementById('listing-more');
+
+  // One Office preview at a time. The iframe is destroyed on every switch: a
+  // large document holds hundreds of megabytes of WASM heap that is only
+  // released when the frame goes away.
+  var OFFICE_MAX_BYTES = 50 * 1024 * 1024;
+  // The CAD viewer converts the whole drawing to geometry up front, so the
+  // ceiling is a little higher than for Office but still finite.
+  var CAD_MAX_BYTES = 80 * 1024 * 1024;
+  // If the frame never reports back — a browser that blocks the module worker,
+  // a document that kills it — the pane would otherwise sit on "rendering"
+  // forever with no hint that anything went wrong.
+  var OFFICE_TIMEOUT_MS = 30000;
+  var CAD_TIMEOUT_MS = 60000;
+  // Prism and marked run synchronously on the main thread. Above these sizes a
+  // preview would stall the window, so plain text remains the fallback.
+  var HIGHLIGHT_MAX_BYTES = 512 * 1024;
+  var MARKDOWN_MAX_BYTES = 1024 * 1024;
+  // Both viewers share one slot: only one preview is ever mounted, whichever
+  // kind it is, and the frame is torn down before the next one is created.
+  var viewerFrame = null;
+  var viewerBuffer = null;
+  var viewerCtx = null;
+  var viewerTimer = null;
+  var viewerKind = '';
+
+  function placeholder() {
+    var wrap = document.createElement('div');
+    wrap.className = 'placeholder';
+    wrap.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v16"/></svg>' +
+      '<p>' + (TEXT.pick || '') + '</p><p class="sub">' + (TEXT.supports || '') + '</p>';
+    return wrap;
+  }
+
+  function notice(text, href) {
+    var div = document.createElement('div');
+    div.className = 'notice';
+    div.textContent = text;
+    if (href) {
+      var link = document.createElement('a');
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = ' ' + (TEXT.openTab || '');
+      div.appendChild(link);
+    }
+    return div;
+  }
+
+  function resetViewer() {
+    if (viewerTimer) {
+      clearTimeout(viewerTimer);
+      viewerTimer = null;
+    }
+    if (viewerFrame) {
+      viewerFrame.remove();
+      viewerFrame = null;
+    }
+    viewerBuffer = null;
+    viewerCtx = null;
+    viewerKind = '';
+  }
+
+  function officeFormat(name) {
+    var dot = name.lastIndexOf('.');
+    return dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
+  }
+
+  function viewerFailure(code) {
+    var key = {
+      'encrypted': 'office.encrypted',
+      'unsupported': 'office.unsupported'
+    }[code] || (viewerKind === 'cad' ? 'cad.failed' : 'office.failed');
+    var ctx = viewerCtx;
+    resetViewer();
+    if (ctx) show(ctx.name, ctx.size, notice(TEXT[key] || '', ctx.href));
+  }
+
+  function clearSelection() {
+    if (selectedRow) {
+      selectedRow.classList.remove('selected');
+      selectedRow = null;
+    }
+  }
+
+  function reset() {
+    resetViewer();
+    clearSelection();
+    layout.classList.remove('has-preview');
+    body.replaceChildren(placeholder());
+    nameEl.textContent = TEXT.preview || '';
+    nameEl.classList.remove('ready');
+    openLink.hidden = true;
+    closeBtn.hidden = true;
+  }
+
+  function show(name, size, node) {
+    body.replaceChildren(node);
+    nameEl.textContent = size ? name + '  ·  ' + size : name;
+    nameEl.classList.add('ready');
+    closeBtn.hidden = false;
+  }
+
+  function renderText(link, name, size, bytes) {
+    show(name, size, notice(TEXT.loading || ''));
+    fetch(link.getAttribute('href'), { cache: 'no-store' })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.text();
+      })
+      .then(function (text) {
+        var pre = document.createElement('pre');
+        pre.className = 'code';
+
+        var rendered = null;
+        if (window.LWPreview && bytes <= HIGHLIGHT_MAX_BYTES) {
+          try {
+            var language = LWPreview.languageFor(name);
+            if (language) rendered = LWPreview.highlight(text, language);
+          } catch (err) {
+            rendered = null;
+          }
+        }
+
+        if (rendered === null || rendered === undefined) {
+          pre.textContent = text;
+        } else {
+          pre.innerHTML = rendered;
+        }
+        show(name, size, pre);
+      })
+      .catch(function (err) {
+        show(name, size, notice((TEXT.unreadable || '').replace('%s', err.message)));
+      });
+  }
+
+  function renderMarkdown(link, name, size) {
+    show(name, size, notice(TEXT.loading || ''));
+    fetch(link.getAttribute('href'), { cache: 'no-store' })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.text();
+      })
+      .then(function (text) {
+        var fragment = null;
+        if (window.LWPreview) {
+          try {
+            fragment = LWPreview.markdown(text);
+          } catch (err) {
+            fragment = null;
+          }
+        }
+
+        // The bundle is optional: a load failure must leave a readable preview.
+        if (!fragment) {
+          var pre = document.createElement('pre');
+          pre.className = 'code';
+          pre.textContent = text;
+          show(name, size, pre);
+          return;
+        }
+
+        var article = document.createElement('article');
+        article.className = 'markdown';
+        article.appendChild(fragment);
+        show(name, size, article);
+      })
+      .catch(function (err) {
+        show(name, size, notice((TEXT.unreadable || '').replace('%s', err.message)));
+      });
+  }
+
+  function renderImage(link, name, size) {
+    var stage = document.createElement('div');
+    stage.className = 'stage';
+    var img = document.createElement('img');
+    img.alt = name;
+    img.src = link.getAttribute('href');
+    img.addEventListener('error', function () {
+      show(name, size, notice(TEXT.imageError || ''));
+    });
+    stage.appendChild(img);
+    show(name, size, stage);
+  }
+
+  function renderFrame(link, name, size, sandbox) {
+    var frame = document.createElement('iframe');
+    frame.className = 'frame';
+    frame.src = link.getAttribute('href');
+    frame.title = name;
+    if (sandbox) frame.setAttribute('sandbox', sandbox);
+    show(name, size, frame);
+  }
+
+  function renderMedia(link, name, size, tag) {
+    var wrap = document.createElement('div');
+    wrap.className = 'media';
+    var el = document.createElement(tag);
+    el.src = link.getAttribute('href');
+    el.controls = true;
+    wrap.appendChild(el);
+    show(name, size, wrap);
+  }
+
+  // The bytes are read here and handed to the viewer over postMessage. The
+  // handshake is kept even though both pages are same-origin today: it is what
+  // lets the viewer move to its own origin later without touching the rest.
+  function renderOffice(link, name, size, bytes) {
+    var href = link.getAttribute('href');
+
+    if (bytes > OFFICE_MAX_BYTES) {
+      show(name, size, notice((TEXT['office.tooLarge'] || '').replace('%s', size), href));
+      return;
+    }
+
+    show(name, size, notice(TEXT['office.loading'] || ''));
+
+    fetch(href, { cache: 'no-store' })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.arrayBuffer();
+      })
+      .then(function (buffer) {
+        mountOffice(buffer, href, name, size);
+      })
+      .catch(function () {
+        show(name, size, notice(TEXT['office.unreadable'] || '', href));
+      });
+  }
+
+  function mountOffice(buffer, href, name, size) {
+    var frame = document.createElement('iframe');
+    frame.className = 'frame';
+    frame.title = name;
+    // No sandbox attribute: the viewer parses in a Worker, and a sandboxed
+    // frame without allow-same-origin has an opaque origin, which makes the
+    // browser refuse to load that Worker. The frame still keeps the viewer's
+    // DOM and CSS away from the listing page. Note that this leaves the page
+    // same-origin with the site — see docs/office-preview.md.
+    frame.src = '/__docwebhub/office/?format=' + encodeURIComponent(officeFormat(name)) +
+      '&name=' + encodeURIComponent(name);
+
+    var stage = document.createElement('div');
+    stage.className = 'office-stage';
+    stage.appendChild(notice(TEXT['office.loading'] || ''));
+    stage.appendChild(frame);
+
+    viewerFrame = frame;
+    viewerBuffer = buffer;
+    viewerCtx = { name: name, size: size, href: href };
+    viewerKind = 'office';
+
+    viewerTimer = setTimeout(function () {
+      viewerTimer = null;
+      viewerFailure('timeout');
+    }, OFFICE_TIMEOUT_MS);
+
+    show(name, size, stage);
+  }
+
+  // The CAD viewer works the same way: the bytes are handed over inside the
+  // frame, so a site password never has to travel with the drawing.
+  function renderCad(link, name, size, bytes) {
+    var href = link.getAttribute('href');
+
+    if (bytes > CAD_MAX_BYTES) {
+      show(name, size, notice((TEXT['cad.tooLarge'] || '').replace('%s', size), href));
+      return;
+    }
+
+    show(name, size, notice(TEXT['cad.loading'] || ''));
+
+    fetch(href, { cache: 'no-store' })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.arrayBuffer();
+      })
+      .then(function (buffer) {
+        mountCad(buffer, href, name, size);
+      })
+      .catch(function () {
+        show(name, size, notice(TEXT['cad.unreadable'] || '', href));
+      });
+  }
+
+  function mountCad(buffer, href, name, size) {
+    var frame = document.createElement('iframe');
+    frame.className = 'frame';
+    frame.title = name;
+    // No sandbox attribute either: the viewer runs its text layout in a module
+    // worker, and a frame without allow-same-origin has an opaque origin that
+    // the browser refuses to start that worker from.
+    frame.src = '/__docwebhub/cad/';
+
+    var stage = document.createElement('div');
+    stage.className = 'office-stage';
+    stage.appendChild(notice(TEXT['cad.loading'] || ''));
+    stage.appendChild(frame);
+
+    viewerFrame = frame;
+    viewerBuffer = buffer;
+    viewerCtx = { name: name, size: size, href: href };
+    viewerKind = 'cad';
+
+    viewerTimer = setTimeout(function () {
+      viewerTimer = null;
+      viewerFailure('timeout');
+    }, CAD_TIMEOUT_MS);
+
+    show(name, size, stage);
+  }
+
+  function renderUnsupported(link, name, size) {
+    show(name, size, notice(TEXT.noPreview || '', link.getAttribute('href')));
+  }
+
+  function open(link, row) {
+    if (window.matchMedia('(max-width: 980px)').matches) return; // narrow screens: let the browser handle it
+
+    var kind = link.getAttribute('data-kind');
+    var name = link.getAttribute('data-name');
+    var size = link.getAttribute('data-size');
+    var bytes = parseInt(link.getAttribute('data-bytes') || '0', 10);
+
+    resetViewer();
+    clearSelection();
+    selectedRow = row;
+    row.classList.add('selected');
+    layout.classList.add('has-preview');
+
+    openLink.href = link.getAttribute('href');
+    openLink.hidden = false;
+
+    if (kind === 'text' && bytes > 2 * 1024 * 1024) {
+      show(name, size, notice((TEXT.tooLarge || '').replace('%s', size), link.getAttribute('href')));
+      return;
+    }
+
+    if (kind === 'markdown' && bytes > MARKDOWN_MAX_BYTES) {
+      show(name, size, notice((TEXT.tooLarge || '').replace('%s', size), link.getAttribute('href')));
+      return;
+    }
+
+    switch (kind) {
+      case 'text': renderText(link, name, size, bytes); break;
+      case 'markdown': renderMarkdown(link, name, size); break;
+      case 'image': renderImage(link, name, size); break;
+      case 'pdf': renderFrame(link, name, size, ''); break;
+      case 'html': renderFrame(link, name, size, 'allow-scripts allow-forms allow-popups allow-modals'); break;
+      case 'audio': renderMedia(link, name, size, 'audio'); break;
+      case 'video': renderMedia(link, name, size, 'video'); break;
+      case 'office': renderOffice(link, name, size, bytes); break;
+      case 'cad': renderCad(link, name, size, bytes); break;
+      default: renderUnsupported(link, name, size);
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    var link = event.target.closest('a[data-kind]');
+    if (!link) return;
+
+    var kind = link.getAttribute('data-kind');
+    if (kind === 'dir') return; // directories navigate as usual
+
+    if (window.matchMedia('(max-width: 980px)').matches) return; // narrow screens open the file directly
+
+    event.preventDefault();
+    open(link, link.closest('tr'));
+  });
+
+  // Handshake with the viewer in the frame: it announces itself, receives the
+  // bytes, and reports ready or an error code. Office and CAD use the same
+  // protocol with a different tag, so one handler serves both.
+  window.addEventListener('message', function (event) {
+    if (!viewerFrame || event.source !== viewerFrame.contentWindow) return;
+
+    var data = event.data || {};
+    var tag = data.lwCad !== undefined ? 'lwCad' : 'lwOffice';
+    if (data[tag] === undefined) return;
+
+    // An export re-reads the file: the viewer handed its own copy to the
+    // parser worker, and holding a second one would double the memory a large
+    // document needs for the sake of a button that is rarely pressed.
+    if (data[tag] === 'need-bytes' && viewerCtx) {
+      var source = event.source;
+      var again = viewerCtx.href;
+      fetch(again, { cache: 'no-store' })
+        .then(function (res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.arrayBuffer();
+        })
+        .then(function (buffer) {
+          if (!viewerFrame || viewerFrame.contentWindow !== source) return;
+          var answer = {};
+          answer[tag] = 'bytes';
+          answer.buffer = buffer;
+          source.postMessage(answer, '*', [buffer]);
+        })
+        .catch(function () {
+          // The viewer's own timeout releases the button.
+        });
+      return;
+    }
+
+    if (data[tag] === 'hello') {
+      if (!viewerBuffer) return;
+      var buffer = viewerBuffer;
+      viewerBuffer = null;
+      var message = {};
+      message[tag] = 'open';
+      message.buffer = buffer;
+      message.name = viewerCtx ? viewerCtx.name : 'drawing.dxf';
+      viewerFrame.contentWindow.postMessage(message, '*', [buffer]);
+      return;
+    }
+
+    if (data[tag] === 'ready') {
+      if (viewerTimer) {
+        clearTimeout(viewerTimer);
+        viewerTimer = null;
+      }
+      viewerFrame.classList.add('ready');
+      var loading = viewerFrame.parentNode;
+      if (loading) {
+        var note = loading.querySelector('.notice');
+        if (note) note.remove();
+      }
+      // The frame is only visible from this moment on, so a viewer that sizes
+      // itself to its box (the CAD one fits the drawing to the canvas) needs a
+      // nudge to do it again now that the box is real.
+      var shown = {};
+      shown[tag] = 'shown';
+      viewerFrame.contentWindow.postMessage(shown, '*');
+      return;
+    }
+
+    if (data[tag] === 'error') {
+      viewerFailure(data.code);
+    }
+  });
+
+  if (more && tbody) {
+    more.addEventListener('click', function () {
+      var next = parseInt(more.getAttribute('data-next'), 10);
+      if (!next) return;
+
+      var total = parseInt(more.getAttribute('data-total'), 10) || 0;
+      var url = new URL(window.location.href);
+      url.searchParams.set('page', String(next));
+      more.disabled = true;
+
+      fetch(url.toString(), { headers: { Accept: 'text/html' } })
+        .then(function (response) {
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          var serverTotal = parseInt(response.headers.get('X-Listing-Total'), 10);
+          if (!isNaN(serverTotal)) total = serverTotal;
+          return response.text();
+        })
+        .then(function (html) {
+          tbody.insertAdjacentHTML('beforeend', html);
+          // Parent rows exist only on the first page, so every other row is one
+          // loaded entry.
+          var loaded = tbody.querySelectorAll('tr:not(.parent)').length;
+          more.setAttribute('data-total', String(total));
+          if (loaded >= total) {
+            more.remove();
+            return;
+          }
+          more.setAttribute('data-next', String(next + 1));
+          more.disabled = false;
+        })
+        .catch(function () {
+          more.disabled = false;
+        });
+    });
+  }
+
+  closeBtn.addEventListener('click', reset);
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') reset();
+  });
+})();
+</script>
+</body>
+</html>
+{{define "entry-row"}}
+<tr class="{{if .IsDir}}dir{{end}}{{if .Hidden}} hidden{{end}}">
+  <td class="name">
+    <a href="{{.Href}}" data-kind="{{.Kind}}"
+       data-name="{{.Name}}" data-size="{{.Size}}" data-bytes="{{.Bytes}}">
+      {{if .IsDir}}
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 3 17z" />
+      </svg>
+      {{else}}
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z" />
+        <path d="M13 3v6h6" />
+      </svg>
+      {{end}}
+      <span>{{.Name}}{{if .IsDir}}/{{end}}</span>
+    </a>
+  </td>
+  <td class="size">{{if .IsDir}}—{{else}}{{.Size}}{{end}}</td>
+  <td class="time">{{.Modified}}</td>
+</tr>
+{{end}}

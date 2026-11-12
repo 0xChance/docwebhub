@@ -1,0 +1,67 @@
+{
+  "_comment": [
+    "CAD text styles are named after the font file AutoCAD used, and almost every",
+    "drawing names a font this build is not allowed to redistribute: the .shx set is",
+    "Autodesk's, and the TTF names (simsun, arial, ...) are Microsoft's.",
+    "",
+    "So instead of shipping those fonts, every name a drawing is likely to ask for is",
+    "mapped onto one of two open fonts and served under its original name. The viewer",
+    "resolves a style name through this catalog, finds a real file, and never raises",
+    "the 'missing font' notice. The glyphs are Noto's, not the original's, so a",
+    "single-stroke SHX face becomes a sans-serif one - text is legible and complete,",
+    "just not a pixel-identical copy of the plotted sheet.",
+    "",
+    "Names are matched case-insensitively by the viewer; they are written here as",
+    "they appear in drawings. The Chinese font also carries the Latin, Cyrillic and",
+    "kana glyphs, so an ambiguous name belongs to it rather than to the Latin one.",
+    "",
+    "Hangul is not covered. A drawing that uses it still reports a missing font and",
+    "needs -cad-fonts-dir with a Korean face in it."
+  ],
+
+  "noto-sans.ttf": [
+    "arial", "arial narrow", "arialmt", "helvetica", "helv", "helve", "swiss",
+    "tahoma", "verdana", "calibri", "cambria", "consolas", "courier",
+    "courier new", "times", "times new roman", "timesout",
+
+    "standard", "annotative", "standard_1",
+
+    "romans", "romand", "romanc", "romant", "romanp", "romansh", "romani",
+    "roman", "romand_1", "romsim", "simplex", "simplex8", "simplex2", "simplex3",
+    "script", "scripts", "scriptc", "scriptr", "italic", "italicc", "italict",
+    "italic8", "bold", "bold8", "txt", "txt2", "txt3", "monotxt", "monotxt8",
+    "gothice", "gothicg", "gothici", "gothict", "greekc", "greeks", "greekp",
+    "hand1", "complex", "dim", "city", "cityb", "country", "blueprint",
+    "norsrc", "norsrc1",
+
+    "iso", "isocp", "isocp2", "isocp3", "isoct", "isoct2", "isoct3",
+    "geniso", "geniso12", "genlthsp", "genltshp", "genprese", "genltype",
+
+    "gbenor", "gbeitc", "gbeng", "gbenor1",
+    "tssdeng", "yjkeng", "zjdz-s",
+
+    "gost", "romrust", "gost2304", "cs_gost2304", "GOST Common",
+    "GOST Type A", "GOST Type B", "gosta", "gostb", "gostbu", "gost_a", "gost_b",
+
+    "amgdt", "amgdtans", "AMGDT DWE Edits", "AMGDTANS DWE Edits", "gdt",
+    "AIGDT", "AMDTSymbols", "AcadEref", "CDM_NC", "Cdm", "aehalf",
+    "exthalf2", "extslim2", "g12f13", "g13f12d", "g13f12w",
+    "iges1001", "iges1002", "iges1003", "ltypeshp", "spec_bar", "spec_sl",
+    "special", "syastro", "symap", "symeteo", "symusic", "symath"
+  ],
+
+  "noto-sans-sc.otf": [
+    "simsun", "nsimsun", "宋体", "新宋体", "中易宋体", "微软宋体", "华文宋体",
+    "simhei", "黑体", "华文黑体",
+    "simfang", "fangsong", "仿宋", "仿宋_GB2312", "FangSong_GB2312", "华文仿宋",
+    "simkai", "kai", "kaiti", "楷体", "华文楷体",
+    "msyh", "msyhl", "微软雅黑", "dengxian", "等线",
+
+    "hztxt", "hztxt1", "hzfs", "gbhzfs", "gbcbig", "gbcbig2",
+    "chineset", "intecad", "tssdchn", "yjkchn", "pkpmchn", "pkpmeng", "zjdz",
+    "whgdtxt", "whgtxt", "whtgtxt", "whtmtxt", "gbgdt", "SJQY",
+
+    "msgothic", "ms gothic", "MS Gothic", "MSゴシック", "ＭＳ ゴシック",
+    "extfont", "extfont2", "@extfont2", "bigfont", "gothicb"
+  ]
+}
