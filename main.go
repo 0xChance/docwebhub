@@ -42,6 +42,14 @@ const (
 )
 
 func main() {
+	// AppKit builds the main menu and runs the event loop on the process's
+	// main thread. The goroutine that runs main() starts there, but every
+	// blocking call before ui.Run — reading the config, listening on the port —
+	// can leave it on another thread, and the LockOSThread inside ui.Run would
+	// then pin the wrong one (an assertion failure in setMainMenu:). Pin it
+	// first, while it is certainly the main thread.
+	runtime.LockOSThread()
+
 	distFlag := flag.String("dist", defaultDistName, "static site root folder (overrides the config file)")
 	noGUI := flag.Bool("no-gui", false, "run the web server only, without the GUI")
 	openInBrowser := flag.Bool("open", false, "open the site in the default browser after start")
@@ -222,6 +230,8 @@ func main() {
 			BindOptions:  bindOptions(),
 			Root:         root,
 			RootMissing:  rootMissing,
+			Stats:        overviewStats(srv),
+			RefreshStats: func() ui.Stats { return overviewStats(srv) },
 			AuthEnabled:  auth != nil,
 			AuthUsername: cfg.Username,
 			ChooseRoot: func(dir string) error {
@@ -300,6 +310,72 @@ func bindOptions() []ui.BindOption {
 		options = append(options, ui.BindOption{Label: label, Value: addr.IP})
 	}
 	return options
+}
+
+// overviewStats turns the server's counters into the strings the window shows.
+// All formatting happens here so the UI package stays free of clocks and
+// locales.
+func overviewStats(srv *web.Server) ui.Stats {
+	stats := ui.Stats{}
+
+	if started := srv.Started(); !started.IsZero() {
+		stats.Uptime = formatUptime(time.Since(started))
+	}
+
+	now := time.Now()
+	for _, d := range srv.Devices() {
+		stats.Devices = append(stats.Devices, ui.StatDevice{
+			Addr: d.Addr,
+			Seen: formatSeen(now.Sub(d.Last)),
+			Hits: d.Hits,
+		})
+		if len(stats.Devices) >= 5 {
+			break // the window names the few that matter, not a full log
+		}
+	}
+
+	stats.Hourly = srv.HourlyRequests()
+	stats.Recent = srv.RecentFiles()
+	stats.Requests = srv.TotalRequests()
+
+	files, dirs, truncated := srv.CountTree()
+	stats.Files, stats.Dirs, stats.Truncated = files, dirs, truncated
+	return stats
+}
+
+// formatUptime renders a duration the way a status line would: minutes below an
+// hour, hours and minutes below a day, days above that.
+func formatUptime(d time.Duration) string {
+	if d < time.Minute {
+		return "<1m"
+	}
+	mins := int(d.Minutes())
+	if mins < 60 {
+		return fmt.Sprintf("%dm", mins)
+	}
+	hours, mins := mins/60, mins%60
+	if hours < 24 {
+		if mins == 0 {
+			return fmt.Sprintf("%dh", hours)
+		}
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	}
+	days := hours / 24
+	return fmt.Sprintf("%dd %dh", days, hours%24)
+}
+
+// formatSeen keeps the "last seen" column to three characters.
+func formatSeen(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return i18n.T("ui.overview.now")
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
 }
 
 // applyBind switches the listen address and persists it.

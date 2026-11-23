@@ -131,5 +131,19 @@
   "web.office.page": "%d ページ",
   "web.office.pages": "ページのサムネイル",
   "web.office.zoomIn": "拡大",
-  "web.office.zoomOut": "縮小"
+  "web.office.zoomOut": "縮小",
+  "ui.overview.uptime": "稼働時間",
+  "ui.overview.devices": "端末",
+  "ui.overview.online": "接続中",
+  "ui.overview.requests": "本日のリクエスト",
+  "ui.overview.files": "共有ファイル",
+  "ui.overview.devices.title": "最近の端末",
+  "ui.overview.hourly": "1 時間ごとのリクエスト",
+  "ui.overview.recent": "最近開いたもの",
+  "ui.overview.empty": "データなし",
+  "ui.overview.now": "たった今",
+  "ui.tab.overview": "概要",
+  "ui.tab.settings": "設定",
+  "ui.tab.security": "セキュリティ",
+  "ui.tab.language": "言語"
 }

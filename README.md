@@ -102,21 +102,29 @@ whoever can reach the address.
 
 Prebuilt apps are attached to each [release](../../releases):
 
+Every download is a zip named `docwebhub-<version>-<platform>-<arch>.zip`.
+
 | System | File | Notes |
 |---|---|---|
-| macOS 11+ | `docWebHub.app` | Apple Silicon and Intel builds, ad-hoc signed |
-| Windows 10+ | `docwebhub-windows-amd64.exe` | No console window |
-| Linux | `docwebhub-linux-amd64` + `docwebhub.desktop` | Needs GTK 3 and Ayatana AppIndicator 3 at runtime |
+| macOS 11+ (Apple Silicon) | `docwebhub-<version>-macos-arm64.zip` | Ad-hoc signed |
+| macOS 11+ (Intel) | `docwebhub-<version>-macos-amd64.zip` | Ad-hoc signed |
+| Windows 10+ (x64) | `docwebhub-<version>-windows-amd64.zip` | No console window |
+| Windows 10+ (ARM) | `docwebhub-<version>-windows-arm64.zip` | Snapdragon and other ARM laptops |
+| Linux (x64) | `docwebhub-<version>-linux-amd64.zip` | Needs GTK 3 and Ayatana AppIndicator 3 at runtime |
 
-**macOS**: open the `.app` and drag it into Applications if you want to keep it there. The
+`SHA256SUMS` sits next to them if you want to verify the download.
+
+**macOS**: unzip, then drag `docWebHub.app` into Applications if you want to keep it there. The
 first launch needs right-click → **Open** because the app is not notarized.
 
-**Windows**: double-click the `.exe`. Keep it wherever you like.
+**Windows**: unzip and double-click `docwebhub.exe`. Keep it wherever you like.
 
-**Linux**: keep the executable and the `.desktop` file together, then run the executable. Most
-desktops already include GTK 3 and the AppIndicator library. If the window does not appear, on
-Arch install `gtk3` and `libayatana-appindicator`; on Debian or Ubuntu install `libgtk-3-dev`
-and `libayatana-appindicator3-dev`.
+**Linux**: unzip and run `./docwebhub`. The zip also carries `docwebhub.desktop` and
+`docwebhub.png`; the `.desktop` file ships with `Exec` and `Icon` set to `/path/to/...`, so
+point them at wherever you put the binary and icon before using it. Most desktops already
+include GTK 3 and the AppIndicator library. If the window does not appear, on Arch install
+`gtk3` and `libayatana-appindicator`; on Debian or Ubuntu install `libgtk-3-dev` and
+`libayatana-appindicator3-dev`.
 
 ### Build it yourself
 

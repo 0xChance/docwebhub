@@ -133,6 +133,7 @@ type Server struct {
 	site     atomic.Pointer[site]
 	auth     atomic.Pointer[Auth]
 	access   *accessLog
+	counts   fileCount
 	office   http.Handler
 	cad      http.Handler
 	update   *update.Client

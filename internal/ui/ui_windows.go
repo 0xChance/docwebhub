@@ -158,6 +158,9 @@ func Run(opts Options) error {
 func windowContentHeight() int {
 	settingCount := 0
 	for _, row := range activeForm.form.rows {
+		if row.group == groupOverview {
+			continue // this renderer has no overview tab yet
+		}
 		if row.kind == "setting" {
 			settingCount++
 		}
@@ -181,6 +184,9 @@ func buildForm() {
 	form := &activeForm.form
 	settingCount := 0
 	for _, row := range form.rows {
+		if row.group == groupOverview {
+			continue
+		}
 		if row.kind == "setting" {
 			settingCount++
 		}
@@ -203,6 +209,11 @@ func buildForm() {
 
 	settingIndex := 0
 	for rowIndex, row := range form.rows {
+		// The overview tab is GTK-only for now. Rendering its rows here would
+		// stack unknown kinds into the fixed layout below.
+		if row.group == groupOverview {
+			continue
+		}
 		switch row.kind {
 		case "header":
 			for column, field := range row.fields {

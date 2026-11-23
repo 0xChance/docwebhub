@@ -25,6 +25,8 @@ char *docwebhub_form_title(void);
 int docwebhub_form_row_count(void);
 char *docwebhub_form_row_id(int row);
 char *docwebhub_form_row_kind(int row);
+char *docwebhub_form_row_group(int row);
+void docwebhub_form_refresh_stats(void);
 char *docwebhub_form_row_label(int row);
 
 int docwebhub_form_field_count(int row);

@@ -131,5 +131,19 @@
   "web.office.page": "%d페이지",
   "web.office.pages": "페이지 축소판",
   "web.office.zoomIn": "확대",
-  "web.office.zoomOut": "축소"
+  "web.office.zoomOut": "축소",
+  "ui.overview.uptime": "실행 시간",
+  "ui.overview.devices": "기기",
+  "ui.overview.online": "접속 중",
+  "ui.overview.requests": "오늘 요청",
+  "ui.overview.files": "공유 파일",
+  "ui.overview.devices.title": "최근 기기",
+  "ui.overview.hourly": "시간당 요청",
+  "ui.overview.recent": "최근 연 파일",
+  "ui.overview.empty": "데이터 없음",
+  "ui.overview.now": "방금",
+  "ui.tab.overview": "개요",
+  "ui.tab.settings": "설정",
+  "ui.tab.security": "보안",
+  "ui.tab.language": "언어"
 }

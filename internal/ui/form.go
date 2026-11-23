@@ -8,6 +8,7 @@ package ui
 
 import (
 	"log"
+	"path"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,10 @@ import (
 //	status, heading, description, link, value, input, number, password,
 //	button, select, hint, spacer
 //
+// The overview tab adds kinds that hold more than one value:
+//
+//	stat, badge, device-list, sparkline, file-list
+//
 // A field width is -1 for "take the remaining space", 0 for natural size, or a
 // positive logical-point width.
 //
@@ -32,6 +37,18 @@ import (
 // form the settings card.
 
 const formProductName = "docWebHub"
+
+// Row groups. The window shows one group at a time as a tab; "chrome" rows are
+// shared by every tab. Renderers that do not implement tabs (the AppKit and
+// Win32 ones for now) simply skip the overview group, which is the only one
+// they have no widgets for.
+const (
+	groupOverview = "overview"
+	groupSettings = "settings"
+	groupSecurity = "security"
+	groupLanguage = "language"
+	groupChrome   = "chrome"
+)
 
 const (
 	kindStatus      = "status"
@@ -46,6 +63,15 @@ const (
 	kindSelect      = "select"
 	kindHint        = "hint"
 	kindSpacer      = "spacer"
+
+	// Overview rows. They carry several values each rather than a label and a
+	// control, which is why they get their own kinds instead of being forced
+	// into the setting shape.
+	kindStat       = "stat"        // one big number with a caption
+	kindBadge      = "badge"       // a row of small pills
+	kindDeviceList = "device-list" // address, last seen, request count
+	kindSparkline  = "sparkline"   // 24 request counts
+	kindFileList   = "file-list"   // recently opened documents
 )
 
 const (
@@ -100,7 +126,9 @@ type formField struct {
 }
 
 type formRow struct {
-	id     string
+	id string
+	// group is the tab this row belongs to; groupChrome means every tab.
+	group  string
 	kind   string
 	label  string
 	fields []formField
@@ -210,6 +238,24 @@ func (c *formController) rebuild() {
 		rootTooltip = ""
 	}
 
+	// Overview text. Everything is formatted here so the platform renderers only
+	// place strings; they have no clock and no notion of "2 min ago".
+	stats := c.opts.Stats
+	uptimeText := stats.Uptime
+	if uptimeText == "" {
+		uptimeText = i18n.T("ui.overview.empty")
+	}
+	deviceCountText := strconv.Itoa(len(stats.Devices))
+	badgeOnline := deviceCountText
+	badgeRequests := humanCount(stats.Requests)
+	badgeFiles := humanCount(int64(stats.Files))
+	if stats.Truncated {
+		badgeFiles += "+"
+	}
+	devicesText := formatDevices(stats.Devices)
+	hourlyText := formatHourly(stats.Hourly)
+	recentText := formatRecent(stats.Recent)
+
 	authText := i18n.T("ui.auth.off")
 	authStyle := styleMuted
 	if c.authEnabled && c.authUser != "" {
@@ -235,8 +281,9 @@ func (c *formController) rebuild() {
 		title: formProductName,
 		rows: []formRow{
 			{
-				id:   "header",
-				kind: "header",
+				id:    "header",
+				group: groupOverview,
+				kind:  "header",
 				fields: []formField{
 					{id: "status", kind: kindStatus, value: statusText, style: statusStyle, width: -1},
 					{id: "title", kind: kindHeading, value: formProductName, style: styleDefault, width: -1},
@@ -244,8 +291,83 @@ func (c *formController) rebuild() {
 				},
 			},
 			{
-				id:   "url",
-				kind: "url",
+				id:    "stats",
+				group: groupOverview,
+				kind:  "stat",
+				fields: []formField{
+					{
+						id:    "uptime",
+						kind:  kindStat,
+						label: i18n.T("ui.overview.uptime"),
+						value: uptimeText,
+						width: -1,
+					},
+					{
+						id:    "device-count",
+						kind:  kindStat,
+						label: i18n.T("ui.overview.devices"),
+						value: deviceCountText,
+						width: -1,
+					},
+				},
+			},
+			{
+				id:    "badges",
+				group: groupOverview,
+				kind:  "badge",
+				fields: []formField{
+					{id: "badge-online", kind: kindBadge, value: badgeOnline, label: i18n.T("ui.overview.online")},
+					{id: "badge-requests", kind: kindBadge, value: badgeRequests, label: i18n.T("ui.overview.requests")},
+					{id: "badge-files", kind: kindBadge, value: badgeFiles, label: i18n.T("ui.overview.files")},
+				},
+			},
+			{
+				id:    "devices",
+				group: groupOverview,
+				kind:  "device-list",
+				fields: []formField{
+					{
+						id:      "devices",
+						kind:    kindDeviceList,
+						label:   i18n.T("ui.overview.devices.title"),
+						value:   devicesText,
+						tooltip: i18n.T("ui.overview.devices.title"),
+						width:   -1,
+					},
+				},
+			},
+			{
+				id:    "hourly",
+				group: groupOverview,
+				kind:  "sparkline",
+				fields: []formField{
+					{
+						id:    "hourly",
+						kind:  kindSparkline,
+						label: i18n.T("ui.overview.hourly"),
+						value: hourlyText,
+						width: -1,
+					},
+				},
+			},
+			{
+				id:    "recent",
+				group: groupOverview,
+				kind:  "file-list",
+				fields: []formField{
+					{
+						id:    "recent",
+						kind:  kindFileList,
+						label: i18n.T("ui.overview.recent"),
+						value: recentText,
+						width: -1,
+					},
+				},
+			},
+			{
+				id:    "url",
+				group: groupChrome,
+				kind:  "url",
 				fields: []formField{
 					{
 						id:            "url",
@@ -271,6 +393,7 @@ func (c *formController) rebuild() {
 			},
 			{
 				id:    "root",
+				group: groupSettings,
 				kind:  "setting",
 				label: i18n.T("ui.root.label"),
 				fields: []formField{
@@ -296,6 +419,7 @@ func (c *formController) rebuild() {
 			},
 			{
 				id:    "port",
+				group: groupSettings,
 				kind:  "setting",
 				label: i18n.T("ui.port.label"),
 				fields: []formField{
@@ -321,6 +445,7 @@ func (c *formController) rebuild() {
 			},
 			{
 				id:    "bind",
+				group: groupSettings,
 				kind:  "setting",
 				label: i18n.T("ui.bind.label"),
 				fields: []formField{
@@ -345,6 +470,7 @@ func (c *formController) rebuild() {
 			},
 			{
 				id:    "auth",
+				group: groupSecurity,
 				kind:  "setting",
 				label: i18n.T("ui.auth.label"),
 				fields: []formField{
@@ -381,6 +507,7 @@ func (c *formController) rebuild() {
 			},
 			{
 				id:    "auth-status",
+				group: groupSecurity,
 				kind:  "setting",
 				label: "",
 				fields: []formField{
@@ -395,8 +522,9 @@ func (c *formController) rebuild() {
 				},
 			},
 			{
-				id:   "hint",
-				kind: "hint",
+				id:    "hint",
+				group: groupChrome,
+				kind:  "hint",
 				fields: []formField{
 					{
 						id:    "hint",
@@ -409,6 +537,7 @@ func (c *formController) rebuild() {
 			},
 			{
 				id:    "footer",
+				group: groupLanguage,
 				kind:  "footer",
 				label: i18n.T("ui.language.label"),
 				fields: []formField{
@@ -421,16 +550,6 @@ func (c *formController) rebuild() {
 						style:   styleDefault,
 						width:   232,
 						options: languageOptions,
-					},
-					{id: "footer-spacer", kind: kindSpacer, width: -1},
-					{
-						id:      "access",
-						kind:    kindButton,
-						label:   i18n.T("ui.access.button"),
-						tooltip: i18n.T("ui.access.tooltip"),
-						action:  actionAccessInfo,
-						style:   styleSecondary,
-						width:   120,
 					},
 				},
 			},
@@ -559,4 +678,65 @@ func (c *formController) action(action, value1, value2 string) string {
 // changedIDs returns the field IDs whose widgets need a value/style refresh.
 func (c *formController) changedIDs() []string {
 	return c.changed
+}
+
+// humanCount shortens large numbers the way a status window would: 1204 becomes
+// "1 204" in the Latin scripts and stays exact below a thousand.
+func humanCount(n int64) string {
+	if n < 1000 {
+		return strconv.FormatInt(n, 10)
+	}
+	digits := strconv.FormatInt(n, 10)
+	var groups []string
+	for len(digits) > 3 {
+		groups = append([]string{digits[len(digits)-3:]}, groups...)
+		digits = digits[:len(digits)-3]
+	}
+	groups = append([]string{digits}, groups...)
+	return strings.Join(groups, " ")
+}
+
+// formatDevices renders one device per line as "addr|seen|hits". The separator
+// is a pipe rather than a tab so a path or a locale string cannot break it.
+func formatDevices(devices []StatDevice) string {
+	if len(devices) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, d := range devices {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(d.Addr)
+		b.WriteString(" · ")
+		b.WriteString(d.Seen)
+	}
+	return b.String()
+}
+
+// formatHourly renders the 24 request counts as a comma-separated list, oldest
+// first. A renderer draws them; it never computes them.
+func formatHourly(hourly []int64) string {
+	if len(hourly) == 0 {
+		return ""
+	}
+	parts := make([]string, len(hourly))
+	for i, v := range hourly {
+		parts[i] = strconv.FormatInt(v, 10)
+	}
+	return strings.Join(parts, ",")
+}
+
+// formatRecent renders the recently opened documents as base names, one per
+// line: a status window has no room for a full path, and the folder is already
+// shown in the settings tab.
+func formatRecent(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(paths))
+	for _, p := range paths {
+		names = append(names, path.Base(p))
+	}
+	return strings.Join(names, "\n")
 }

@@ -131,5 +131,19 @@
   "web.office.page": "Página %d",
   "web.office.pages": "Miniaturas das páginas",
   "web.office.zoomIn": "Ampliar",
-  "web.office.zoomOut": "Reduzir"
+  "web.office.zoomOut": "Reduzir",
+  "ui.overview.uptime": "Ativo há",
+  "ui.overview.devices": "Dispositivos",
+  "ui.overview.online": "online",
+  "ui.overview.requests": "requisições hoje",
+  "ui.overview.files": "arquivos compartilhados",
+  "ui.overview.devices.title": "Dispositivos recentes",
+  "ui.overview.hourly": "Requisições por hora",
+  "ui.overview.recent": "Abertos há pouco",
+  "ui.overview.empty": "Sem dados ainda",
+  "ui.overview.now": "agora",
+  "ui.tab.overview": "Atividade",
+  "ui.tab.settings": "Ajustes",
+  "ui.tab.security": "Acesso",
+  "ui.tab.language": "Idioma"
 }

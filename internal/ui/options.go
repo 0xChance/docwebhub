@@ -20,6 +20,28 @@ type LangOption struct {
 }
 
 // Options describes what the window shows and which callbacks run on user action.
+// StatDevice is one address shown on the overview tab. Seen is already
+// formatted in the active language, so the platform code only lays it out.
+type StatDevice struct {
+	Addr string
+	Seen string
+	Hits int64
+}
+
+// Stats is everything the overview tab displays. All text arrives formatted:
+// this package has no clock, no locale rules and no filesystem access, which is
+// what keeps the three renderers free of business logic.
+type Stats struct {
+	Uptime    string
+	Devices   []StatDevice
+	Hourly    []int64
+	Recent    []string
+	Requests  int64
+	Files     int
+	Dirs      int
+	Truncated bool
+}
+
 type Options struct {
 	// URL is the address of the local web server.
 	URL string
@@ -33,6 +55,11 @@ type Options struct {
 	Root string
 	// RootMissing means Root does not exist yet and the user should pick a folder.
 	RootMissing bool
+	// Stats feeds the overview tab. The zero value renders an empty state.
+	Stats Stats
+	// RefreshStats is called by the window on a timer and whenever the overview
+	// tab becomes visible. nil leaves the window showing its first snapshot.
+	RefreshStats func() Stats
 	// AuthEnabled says whether the browser must send a username and password.
 	AuthEnabled bool
 	// AuthUsername is the current username, used to prefill the input field.

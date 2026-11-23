@@ -92,6 +92,7 @@ void docwebhub_reply_terminate(void) {
 
 @interface DocWebHubController : NSObject
 - (void)formAction:(id)sender;
+- (void)tabChanged:(id)sender;
 - (void)menuOpenURL:(id)sender;
 - (void)menuShowWindow:(id)sender;
 - (void)menuQuit:(id)sender;
@@ -130,13 +131,21 @@ void docwebhub_reply_terminate(void) {
     BOOL dark = [[self effectiveAppearance]
                     bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]] ==
                 NSAppearanceNameDarkAqua;
-    NSColor *fill = dark ? [NSColor colorWithWhite:1.0 alpha:0.06] : [NSColor colorWithWhite:0.0 alpha:0.04];
+    // A card is a surface, not a tint: white on the window's grey in light mode,
+    // the raised panel colour in dark. The radius and the hairline come from the
+    // same token list as the website.
+    NSColor *fill = dark ? [NSColor colorWithSRGBRed:0.114 green:0.141 blue:0.180 alpha:1.0]
+                         : [NSColor whiteColor];
     NSColor *edge = dark ? [NSColor colorWithWhite:1.0 alpha:0.10] : [NSColor colorWithWhite:0.0 alpha:0.08];
     CALayer *layer = [self layer];
     [layer setBackgroundColor:[fill CGColor]];
     [layer setBorderColor:[edge CGColor]];
     [layer setBorderWidth:1.0];
-    [layer setCornerRadius:8.0];
+    [layer setCornerRadius:14.0];
+    [layer setShadowColor:[NSColor blackColor].CGColor];
+    [layer setShadowOpacity:dark ? 0.0 : 0.06];
+    [layer setShadowRadius:12.0];
+    [layer setShadowOffset:CGSizeMake(0, -2)];
 }
 
 @end
@@ -401,6 +410,15 @@ static NSString *WDMenuLabelForAction(NSString *wanted) {
     return @"";
 }
 
+// The tab machinery and the two drawn overview widgets live further down; the
+// controller and the field update path need them before their definitions.
+static void WDRebuild(NSString *group);
+static void WDLayoutChrome(void);
+static void WDRefreshTabLabels(void);
+static NSString *WDGroupAtIndex(NSInteger index);
+static void WDApplyBadgeView(id badge, NSString *value, NSString *caption);
+static void WDApplySparkline(id spark, NSString *value);
+
 static void WDApplyField(NSDictionary *field, BOOL updateValue);
 static void WDApplyChanges(void);
 static void WDRefreshLabels(void);
@@ -509,7 +527,7 @@ static void WDApplyField(NSDictionary *field, BOOL updateValue) {
     NSString *placeholder = WDFieldString(row, column, docwebhub_form_field_placeholder);
     NSString *tooltip = WDFieldString(row, column, docwebhub_form_field_tooltip);
     NSString *accessibility = WDFieldString(row, column, docwebhub_form_field_accessibility);
-    NSControl *control = field[@"control"];
+    id control = field[@"control"];
 
     if ([kind isEqualToString:@"button"]) {
         NSButton *button = (NSButton *)control;
@@ -564,6 +582,15 @@ static void WDApplyField(NSDictionary *field, BOOL updateValue) {
         [text setStringValue:([kind isEqualToString:@"hint"] ? label : value)];
         [text setTextColor:WDTextColor(style, kind, rowKind)];
         [text setToolTip:tooltip.length > 0 ? tooltip : nil];
+    } else if ([kind isEqualToString:@"stat"]) {
+        [(NSTextField *)control setStringValue:value];
+    } else if ([kind isEqualToString:@"badge"]) {
+        WDApplyBadgeView(control, value, label);
+    } else if ([kind isEqualToString:@"device-list"] || [kind isEqualToString:@"file-list"]) {
+        NSTextField *text = (NSTextField *)control;
+        [text setStringValue:(value.length > 0 ? value : LWStr("ui.overview.empty"))];
+    } else if ([kind isEqualToString:@"sparkline"]) {
+        WDApplySparkline(control, value);
     }
 }
 
@@ -604,6 +631,7 @@ static void WDRefreshLabels(void) {
     if (docWebHubWindow != nil) {
         [docWebHubWindow setTitle:WDTitle()];
     }
+    WDRefreshTabLabels();
 
     for (NSDictionary *field in docWebHubFields) {
         WDApplyField(field, NO);
@@ -778,6 +806,19 @@ static void WDShowAccessInfo(NSString *text) {
     free(rawText);
 }
 
+- (void)tabChanged:(id)sender {
+    NSInteger index = [sender selectedSegment];
+    NSString *group = WDGroupAtIndex(index);
+    if (group.length > 0) {
+        WDRebuild(group);
+    }
+}
+
+- (void)windowDidResize:(NSNotification *)notification {
+    (void)notification;
+    WDLayoutChrome();
+}
+
 - (void)menuOpenURL:(id)sender {
     docwebhub_action("open-url", "", "");
 }
@@ -822,6 +863,701 @@ static void WDBuildMenu(NSMenu *menu, DocWebHubController *controller) {
     }
 }
 
+// ---- Tabs ----------------------------------------------------------------
+// The window is four tabs, not one long form: the overview answers "what is
+// the server doing", and everything that is only changed occasionally lives
+// behind its own tab. Rows tagged "chrome" (the address and the note under it)
+// are drawn once in the footer and survive a tab switch.
+
+#define WD_WINDOW_WIDTH 760.0
+#define WD_WINDOW_MIN_WIDTH 720.0
+#define WD_INSET 28.0
+#define WD_TAB_TOP 14.0
+#define WD_PAGE_TOP 52.0
+#define WD_FOOTER_HEIGHT 78.0
+
+static NSString *const WDGroups[4] = {@"overview", @"settings", @"security", @"language"};
+static NSString *const WDTabKeys[4] = {@"ui.tab.overview", @"ui.tab.settings",
+                                       @"ui.tab.security", @"ui.tab.language"};
+
+static NSSegmentedControl *WDTabControl = nil;
+static NSView *WDPageView = nil;
+static NSView *WDFooterView = nil;
+
+// WDIsDark resolves the appearance the window is drawn in. Every colour goes
+// through it, so the palette has exactly two definitions.
+static BOOL WDIsDark(NSView *view) {
+    NSAppearanceName name = [[view effectiveAppearance]
+        bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]];
+    return [name isEqualToString:NSAppearanceNameDarkAqua];
+}
+
+// WDAccent is the one brand colour: the orange the website and the GTK window
+// already use. The dark variant is lighter so it holds up on a dark surface.
+static NSColor *WDAccent(NSView *view) {
+    if (WDIsDark(view)) {
+        return [NSColor colorWithSRGBRed:1.00 green:0.478 blue:0.239 alpha:1.0];
+    }
+    return [NSColor colorWithSRGBRed:0.886 green:0.314 blue:0.055 alpha:1.0];
+}
+
+static NSColor *WDSectionColor(void) {
+    return [NSColor tertiaryLabelColor];
+}
+
+// WDWindowBackground is the page behind the cards: a little cooler than the
+// system default, which is what makes a white card read as a surface rather
+// than as the window itself.
+static NSColor *WDWindowBackground(void) {
+    return [NSColor colorWithName:@"WDWindowBackground"
+                 dynamicProvider:^NSColor *(NSAppearance *appearance) {
+                     NSAppearanceName name = [appearance
+                         bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua,
+                                                              NSAppearanceNameDarkAqua ]];
+                     if ([name isEqualToString:NSAppearanceNameDarkAqua]) {
+                         return [NSColor colorWithSRGBRed:0.086 green:0.106 blue:0.133 alpha:1.0];
+                     }
+                     return [NSColor colorWithSRGBRed:0.965 green:0.973 blue:0.980 alpha:1.0];
+                 }];
+}
+
+// WDMinHeightForGroup is the smallest window each tab is allowed to ask for.
+// The real height comes from the page that was just built, so a tab with two
+// rows does not inherit the overview's height; the floor keeps a one-row page
+// from collapsing into a strip.
+static CGFloat WDMinHeightForGroup(NSString *group) {
+    if ([group isEqualToString:@"overview"]) {
+        return 460.0;
+    }
+    if ([group isEqualToString:@"settings"]) {
+        return 380.0;
+    }
+    if ([group isEqualToString:@"security"]) {
+        return 340.0;
+    }
+    return 330.0;
+}
+
+// WDContentHeightForPage turns the height the page reported into a window
+// height: page top, the page itself, a bottom margin and the footer.
+static CGFloat WDContentHeightForPage(NSString *group, CGFloat pageHeight) {
+    CGFloat needed = WD_PAGE_TOP + pageHeight + 26.0 + WD_FOOTER_HEIGHT;
+    return MAX(needed, WDMinHeightForGroup(group));
+}
+
+// ---- Overview widgets ----------------------------------------------------
+
+// DocWebHubSparkline draws the 24 hourly request counts. A row of NSViews with
+// fixed heights would fight the layout, and Core Graphics is already here.
+@interface DocWebHubSparkline : NSView
+@property (nonatomic, copy) NSArray<NSNumber *> *values;
+@end
+
+@implementation DocWebHubSparkline
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    NSRect bounds = [self bounds];
+    NSUInteger count = [self.values count];
+    if (count == 0 || bounds.size.width <= 0 || bounds.size.height <= 0) {
+        return;
+    }
+
+    NSInteger peak = 0;
+    for (NSNumber *value in self.values) {
+        if ([value integerValue] > peak) {
+            peak = [value integerValue];
+        }
+    }
+    if (peak <= 0) {
+        // Nothing has been requested yet: a flat row of marks would claim data
+        // that does not exist. Draw the axis instead.
+        [[NSColor tertiaryLabelColor] setStroke];
+        NSBezierPath *base = [NSBezierPath bezierPath];
+        [base moveToPoint:NSMakePoint(0, bounds.size.height - 0.5)];
+        [base lineToPoint:NSMakePoint(bounds.size.width, bounds.size.height - 0.5)];
+        [base setLineWidth:1.0];
+        [base stroke];
+        return;
+    }
+
+    CGFloat gap = 3.0;
+    CGFloat bar = (bounds.size.width - gap * (CGFloat)(count - 1)) / (CGFloat)count;
+    if (bar < 2.0) {
+        bar = 2.0;
+    }
+    [WDAccent(self) setFill];
+    for (NSUInteger i = 0; i < count; i++) {
+        CGFloat height = bounds.size.height * (CGFloat)[self.values[i] doubleValue] / (CGFloat)peak;
+        if (height < 3.0) {
+            height = 3.0; // an empty hour still shows a mark, so the axis reads
+        }
+        NSRect barRect = NSMakeRect((CGFloat)i * (bar + gap), bounds.size.height - height, bar, height);
+        [[NSBezierPath bezierPathWithRoundedRect:barRect xRadius:1.5 yRadius:1.5] fill];
+    }
+}
+
+- (void)setValues:(NSArray<NSNumber *> *)values {
+    _values = [values copy];
+    [self setNeedsDisplay:YES];
+}
+
+@end
+
+// DocWebHubBadge is one pill: a bold number and a quiet caption on a tinted
+// capsule, the same shape the website uses for the three headline figures.
+@interface DocWebHubBadge : NSView
+@property (nonatomic, strong) NSTextField *text;
+- (instancetype)initWithFrame:(NSRect)frame value:(NSString *)value caption:(NSString *)caption;
+- (void)setValue:(NSString *)value caption:(NSString *)caption;
+@end
+
+@implementation DocWebHubBadge
+
+- (instancetype)initWithFrame:(NSRect)frame value:(NSString *)value caption:(NSString *)caption {
+    self = [super initWithFrame:frame];
+    if (self != nil) {
+        [self setWantsLayer:YES];
+        _text = WDLabel(@"", NSMakeRect(12, 4, 10, 16), 11.5, [NSColor secondaryLabelColor], NO);
+        [_text setLineBreakMode:NSLineBreakByClipping];
+        [self addSubview:_text];
+        [self setValue:value caption:caption];
+        [self docwebhub_applyColors];
+    }
+    return self;
+}
+
+// setValue lays the capsule out around its own text. The width the builder
+// reads afterwards is the width the text needs, so a longer translation can
+// never be clipped.
+- (void)sizeToText {
+    [self.text sizeToFit];
+    NSRect textFrame = [self.text frame];
+    CGFloat width = ceil(NSWidth(textFrame)) + 24;
+    NSRect frame = [self frame];
+    frame.size.width = width;
+    [self setFrame:frame];
+    textFrame.origin = NSMakePoint(12, (NSHeight(frame) - NSHeight(textFrame)) / 2.0);
+    [self.text setFrame:textFrame];
+    [[self layer] setCornerRadius:NSHeight(frame) / 2.0];
+}
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    [self docwebhub_applyColors];
+}
+
+- (void)docwebhub_applyColors {
+    NSColor *fill = WDIsDark(self) ? [NSColor colorWithWhite:1.0 alpha:0.07]
+                                   : [NSColor colorWithWhite:0.0 alpha:0.05];
+    CALayer *layer = [self layer];
+    [layer setBackgroundColor:[fill CGColor]];
+    [layer setCornerRadius:NSHeight([self bounds]) / 2.0];
+}
+
+- (void)setValue:(NSString *)value caption:(NSString *)caption {
+    NSString *joined = caption.length > 0 ? [NSString stringWithFormat:@"%@  %@", value, caption] : value;
+    NSMutableAttributedString *text = [[NSMutableAttributedString alloc]
+        initWithString:joined
+            attributes:@{
+                NSFontAttributeName : [NSFont systemFontOfSize:11.5],
+                NSForegroundColorAttributeName : [NSColor secondaryLabelColor],
+            }];
+    NSUInteger valueLength = MIN([value length], [joined length]);
+    if (valueLength > 0) {
+        [text addAttribute:NSFontAttributeName
+                     value:[NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold]
+                     range:NSMakeRange(0, valueLength)];
+        [text addAttribute:NSForegroundColorAttributeName
+                     value:[NSColor labelColor]
+                     range:NSMakeRange(0, valueLength)];
+    }
+    [self.text setAttributedStringValue:text];
+    [self sizeToText];
+}
+
+@end
+
+// The footer carries the address and the "keeps running" note. It sits on a
+// tinted band with a hairline on top so the content above reads as one pane.
+@interface DocWebHubFooterView : NSView
+@end
+
+@implementation DocWebHubFooterView
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+- (instancetype)initWithFrame:(NSRect)frame {
+    self = [super initWithFrame:frame];
+    if (self != nil) {
+        [self setWantsLayer:YES];
+        [self docwebhub_applyColors];
+    }
+    return self;
+}
+
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    [self docwebhub_applyColors];
+}
+
+- (void)docwebhub_applyColors {
+    NSColor *fill = WDIsDark(self) ? [NSColor colorWithWhite:1.0 alpha:0.03]
+                                   : [NSColor colorWithWhite:0.0 alpha:0.025];
+    [[self layer] setBackgroundColor:[fill CGColor]];
+    [self setNeedsDisplay:YES];
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    NSColor *line = WDIsDark(self) ? [NSColor colorWithWhite:1.0 alpha:0.10]
+                                   : [NSColor colorWithWhite:0.0 alpha:0.08];
+    [line setFill];
+    NSRectFill(NSMakeRect(0, 0, NSWidth([self bounds]), 1));
+}
+
+@end
+
+// WDCreateBadge starts narrow and lets the view size itself from its text.
+static DocWebHubBadge *WDCreateBadge(NSString *value, NSString *caption, NSPoint origin, CGFloat height) {
+    DocWebHubBadge *badge = [[DocWebHubBadge alloc] initWithFrame:NSMakeRect(origin.x, origin.y, 10, height)
+                                                           value:value
+                                                         caption:caption];
+    return badge;
+}
+
+// WDParseValues turns the comma separated hour counts into numbers. Go formats
+// them; the renderer never computes anything.
+static NSArray<NSNumber *> *WDParseValues(NSString *text) {
+    if (text.length == 0) {
+        return @[];
+    }
+    NSMutableArray<NSNumber *> *values = [NSMutableArray array];
+    for (NSString *part in [text componentsSeparatedByString:@","]) {
+        if ([part length] == 0) {
+            continue;
+        }
+        [values addObject:@([part integerValue])];
+        if ([values count] >= 24) {
+            break;
+        }
+    }
+    return values;
+}
+
+// The controller and WDApplyField only see these through id, so the class
+// methods stay out of their translation unit.
+static void WDApplyBadgeView(id badge, NSString *value, NSString *caption) {
+    [(DocWebHubBadge *)badge setValue:value caption:caption];
+}
+
+static void WDApplySparkline(id spark, NSString *value) {
+    [(DocWebHubSparkline *)spark setValues:WDParseValues(value)];
+}
+
+// The tab names live in an NSString table, so they cannot go through LWStr,
+// which takes the C string keys the form uses.
+static NSString *WDTextKey(NSString *key) {
+    char *raw = docwebhub_text([key UTF8String]);
+    NSString *text = raw != NULL ? [NSString stringWithUTF8String:raw] : @"";
+    free(raw);
+    return text;
+}
+
+static void WDRefreshTabLabels(void) {
+    for (int i = 0; i < 4 && WDTabControl != nil; i++) {
+        [WDTabControl setLabel:WDTextKey(WDTabKeys[i]) forSegment:i];
+    }
+}
+
+static NSString *WDGroupAtIndex(NSInteger index) {
+    if (index < 0 || index >= 4) {
+        return @"";
+    }
+    return WDGroups[index];
+}
+
+static NSInteger WDRowWithKind(NSString *group, NSString *kind) {
+    int count = docwebhub_form_row_count();
+    for (int row = 0; row < count; row++) {
+        NSString *rowGroup = WDRowString(row, docwebhub_form_row_group);
+        if (![rowGroup isEqualToString:group]) {
+            continue;
+        }
+        NSString *rowKind = WDRowString(row, docwebhub_form_row_kind);
+        if ([rowKind isEqualToString:kind]) {
+            return row;
+        }
+    }
+    return -1;
+}
+
+// WDRegisterView records a hand-built widget so the refresh path can find it
+// the same way it finds a text field created from the form.
+static void WDRegisterView(int row, int column, NSString *kind, id control) {
+    NSMutableDictionary *record = [NSMutableDictionary dictionary];
+    record[@"row"] = @(row);
+    record[@"field"] = @(column);
+    record[@"id"] = WDFieldString(row, column, docwebhub_form_field_id);
+    record[@"kind"] = kind;
+    record[@"rowKind"] = @"overview";
+    record[@"control"] = control;
+    if ([control isKindOfClass:[NSControl class]]) {
+        [(NSControl *)control setTag:(NSInteger)[docWebHubFields count]];
+    }
+    [docWebHubFields addObject:record];
+}
+
+// ---- Overview page -------------------------------------------------------
+
+// WDLineCount counts the lines a multi-line value will need, so the frame is
+// tall enough rather than clipped.
+static CGFloat WDTextHeight(NSString *text) {
+    NSInteger lines = 0;
+    for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
+        if ([line length] > 0) {
+            lines++;
+        }
+    }
+    if (lines == 0) {
+        lines = 1;
+    }
+    return MAX(18.0, (CGFloat)lines * 18.0);
+}
+
+static NSTextField *WDSectionTitle(NSView *parent, NSString *title, NSPoint origin) {
+    NSTextField *label = WDLabel(title, NSMakeRect(origin.x, origin.y, 320, 15), 11, WDSectionColor(), NO);
+    [label setLineBreakMode:NSLineBreakByClipping];
+    [parent addSubview:label];
+    return label;
+}
+
+static NSTextField *WDMultilineBody(NSView *parent, NSString *body, NSString *empty,
+                                    NSRect frame, CGFloat size, NSColor *color) {
+    NSString *shown = body.length > 0 ? body : empty;
+    NSTextField *label = WDLabel(shown, frame, size, color, NO);
+    [label setLineBreakMode:NSLineBreakByWordWrapping];
+    [label setMaximumNumberOfLines:0];
+    [parent addSubview:label];
+    return label;
+}
+
+static CGFloat WDBuildOverview(NSView *page, CGFloat width, DocWebHubController *controller) {
+    NSString *empty = LWStr("ui.overview.empty");
+    CGFloat y = 0;
+
+    NSInteger headerRow = WDRowWithKind(@"overview", @"header");
+    if (headerRow >= 0) {
+        WDCreateField((int)headerRow, 0, @"header", NSMakeRect(0, 0, width, 17), controller, page);
+        WDCreateField((int)headerRow, 1, @"header", NSMakeRect(0, 20, width, 30), controller, page);
+        WDCreateField((int)headerRow, 2, @"header", NSMakeRect(0, 54, width, 17), controller, page);
+        y = 92;
+    }
+
+    NSInteger statsRow = WDRowWithKind(@"overview", @"stat");
+    if (statsRow >= 0) {
+        int count = docwebhub_form_field_count((int)statsRow);
+        CGFloat x = 0;
+        for (int column = 0; column < count; column++) {
+            NSString *value = WDFieldString((int)statsRow, column, docwebhub_form_field_value);
+            NSString *caption = WDFieldString((int)statsRow, column, docwebhub_form_field_label);
+            NSTextField *big = WDLabel(value, NSMakeRect(x, y, 220, 38), 30, [NSColor labelColor], NO);
+            [big setFont:[NSFont systemFontOfSize:30 weight:NSFontWeightLight]];
+            [big setLineBreakMode:NSLineBreakByTruncatingTail];
+            [page addSubview:big];
+            NSTextField *small = WDLabel(caption, NSMakeRect(x, y + 40, 220, 15), 11,
+                                         [NSColor secondaryLabelColor], NO);
+            [page addSubview:small];
+            WDRegisterView((int)statsRow, column, @"stat", big);
+            x += 220;
+        }
+        y += 66;
+    }
+
+    NSInteger badgeRow = WDRowWithKind(@"overview", @"badge");
+    if (badgeRow >= 0) {
+        int count = docwebhub_form_field_count((int)badgeRow);
+        CGFloat x = 0;
+        for (int column = 0; column < count; column++) {
+            NSString *value = WDFieldString((int)badgeRow, column, docwebhub_form_field_value);
+            NSString *caption = WDFieldString((int)badgeRow, column, docwebhub_form_field_label);
+            DocWebHubBadge *badge = WDCreateBadge(value, caption, NSMakePoint(x, y), 24);
+            [page addSubview:badge];
+            WDRegisterView((int)badgeRow, column, @"badge", badge);
+            x += NSWidth([badge frame]) + 8;
+        }
+        y += 24 + 22;
+    }
+
+    // Two columns: devices on the left, the request chart and the recent files
+    // on the right, the way the website lays the same data out.
+    CGFloat leftWidth = 280.0;
+    CGFloat rightX = leftWidth + 32.0;
+    CGFloat rightWidth = width - rightX;
+    CGFloat columnTop = y;
+    CGFloat leftHeight = 0;
+    CGFloat rightHeight = 0;
+
+    NSInteger devicesRow = WDRowWithKind(@"overview", @"device-list");
+    if (devicesRow >= 0) {
+        NSString *title = WDFieldString((int)devicesRow, 0, docwebhub_form_field_label);
+        NSString *body = WDFieldString((int)devicesRow, 0, docwebhub_form_field_value);
+        WDSectionTitle(page, title, NSMakePoint(0, columnTop));
+        CGFloat bodyHeight = WDTextHeight(body.length > 0 ? body : empty);
+        NSTextField *label = WDMultilineBody(page, body, empty,
+                                             NSMakeRect(0, columnTop + 20, leftWidth, bodyHeight),
+                                             13, [NSColor labelColor]);
+        WDRegisterView((int)devicesRow, 0, @"device-list", label);
+        leftHeight = 20 + bodyHeight;
+    }
+
+    NSInteger hourlyRow = WDRowWithKind(@"overview", @"sparkline");
+    if (hourlyRow >= 0) {
+        NSString *title = WDFieldString((int)hourlyRow, 0, docwebhub_form_field_label);
+        NSString *value = WDFieldString((int)hourlyRow, 0, docwebhub_form_field_value);
+        WDSectionTitle(page, title, NSMakePoint(rightX, columnTop));
+        DocWebHubSparkline *spark =
+            [[DocWebHubSparkline alloc] initWithFrame:NSMakeRect(rightX, columnTop + 20, rightWidth, 48)];
+        [spark setValues:WDParseValues(value)];
+        [page addSubview:spark];
+        WDRegisterView((int)hourlyRow, 0, @"sparkline", spark);
+        rightHeight = 20 + 48;
+    }
+
+    NSInteger recentRow = WDRowWithKind(@"overview", @"file-list");
+    if (recentRow >= 0) {
+        CGFloat recentY = columnTop + rightHeight + 20;
+        NSString *title = WDFieldString((int)recentRow, 0, docwebhub_form_field_label);
+        NSString *body = WDFieldString((int)recentRow, 0, docwebhub_form_field_value);
+        WDSectionTitle(page, title, NSMakePoint(rightX, recentY));
+        CGFloat bodyHeight = WDTextHeight(body.length > 0 ? body : empty);
+        NSTextField *label = WDMultilineBody(page, body, empty,
+                                             NSMakeRect(rightX, recentY + 20, rightWidth, bodyHeight),
+                                             13, [NSColor secondaryLabelColor]);
+        WDRegisterView((int)recentRow, 0, @"file-list", label);
+        rightHeight += 20 + 20 + bodyHeight;
+    }
+
+    return columnTop + MAX(leftHeight, rightHeight);
+}
+
+// ---- Settings, security and language pages -------------------------------
+
+static CGFloat WDBuildSettingRows(NSView *page, CGFloat width, NSString *group,
+                                  DocWebHubController *controller) {
+    int rowCount = docwebhub_form_row_count();
+    int settingCount = 0;
+    for (int row = 0; row < rowCount; row++) {
+        NSString *rowGroup = WDRowString(row, docwebhub_form_row_group);
+        if (![rowGroup isEqualToString:group]) {
+            continue;
+        }
+        NSString *kind = WDRowString(row, docwebhub_form_row_kind);
+        if ([kind isEqualToString:@"setting"]) {
+            settingCount++;
+        }
+    }
+    if (settingCount == 0) {
+        return 0;
+    }
+
+    CGFloat rowHeight = 44.0;
+    CGFloat cardHeight = 20.0 + settingCount * rowHeight;
+    DocWebHubCard *card = [[DocWebHubCard alloc] initWithFrame:NSMakeRect(0, 0, width, cardHeight)];
+    [page addSubview:card];
+
+    int settingIndex = 0;
+    for (int row = 0; row < rowCount; row++) {
+        NSString *rowGroup = WDRowString(row, docwebhub_form_row_group);
+        if (![rowGroup isEqualToString:group]) {
+            continue;
+        }
+        NSString *rowKind = WDRowString(row, docwebhub_form_row_kind);
+        if (![rowKind isEqualToString:@"setting"]) {
+            continue;
+        }
+        NSString *rowLabel = WDRowString(row, docwebhub_form_row_label);
+        int fieldCount = docwebhub_form_field_count(row);
+        CGFloat rowY = 10.0 + settingIndex * rowHeight;
+
+        if (rowLabel.length > 0) {
+            NSTextField *label = WDLabel(rowLabel, NSMakeRect(18, rowY + 12, 96, 16), 12,
+                                         [NSColor secondaryLabelColor], NO);
+            [label setLineBreakMode:NSLineBreakByTruncatingTail];
+            [page addSubview:label];
+            [docWebHubRowLabels addObject:@{@"row" : @(row), @"control" : label}];
+        }
+
+        NSMutableArray *fields = [NSMutableArray array];
+        for (int column = 0; column < fieldCount; column++) {
+            [fields addObject:@{
+                @"kind" : WDFieldKind(row, column),
+                @"width" : @(docwebhub_form_field_width(row, column)),
+            }];
+        }
+        CGFloat controlX = rowLabel.length > 0 ? 124.0 : 18.0;
+        NSArray *widths = WDWidths(fields, width - 18 - controlX, 12);
+        CGFloat x = controlX;
+        for (int column = 0; column < fieldCount; column++) {
+            CGFloat fieldWidth = [widths[column] doubleValue];
+            NSString *kind = WDFieldKind(row, column);
+            CGFloat height = WDFieldHeight(kind);
+            CGFloat fieldY = rowY + (rowHeight - height) / 2.0;
+            if ([kind isEqualToString:@"spacer"]) {
+                x += fieldWidth + 12;
+                continue;
+            }
+            WDCreateField(row, column, rowKind,
+                          NSMakeRect(x, fieldY, fieldWidth, height), controller, page);
+            x += fieldWidth + 12;
+        }
+        settingIndex++;
+    }
+    return cardHeight;
+}
+
+static CGFloat WDBuildLanguageRow(NSView *page, CGFloat width, DocWebHubController *controller) {
+    NSInteger row = WDRowWithKind(@"language", @"footer");
+    if (row < 0) {
+        return 0;
+    }
+    NSString *rowLabel = WDRowString((int)row, docwebhub_form_row_label);
+    int fieldCount = docwebhub_form_field_count((int)row);
+    if (rowLabel.length > 0) {
+        NSTextField *label = WDLabel(rowLabel, NSMakeRect(0, 6, 200, 18), 13,
+                                     [NSColor secondaryLabelColor], NO);
+        [page addSubview:label];
+        [docWebHubRowLabels addObject:@{@"row" : @(row), @"control" : label}];
+    }
+    CGFloat x = 104;
+    for (int column = 0; column < fieldCount; column++) {
+        NSString *kind = WDFieldKind((int)row, column);
+        if ([kind isEqualToString:@"spacer"]) {
+            continue;
+        }
+        CGFloat fieldWidth = docwebhub_form_field_width((int)row, column);
+        if (fieldWidth <= 0) {
+            fieldWidth = width - x;
+        }
+        CGFloat height = WDFieldHeight(kind);
+        WDCreateField((int)row, column, @"footer", NSMakeRect(x, 0, fieldWidth, height), controller, page);
+        x += fieldWidth + 12;
+    }
+    return 32;
+}
+
+// ---- Chrome --------------------------------------------------------------
+
+static CGFloat WDBuildChrome(NSView *footer, CGFloat width, DocWebHubController *controller) {
+    int rowCount = docwebhub_form_row_count();
+    CGFloat y = 14;
+    for (int row = 0; row < rowCount; row++) {
+        NSString *group = WDRowString(row, docwebhub_form_row_group);
+        if (![group isEqualToString:@"chrome"]) {
+            continue;
+        }
+        NSString *kind = WDRowString(row, docwebhub_form_row_kind);
+        int fieldCount = docwebhub_form_field_count(row);
+
+        if ([kind isEqualToString:@"url"]) {
+            NSMutableArray *fields = [NSMutableArray array];
+            for (int column = 0; column < fieldCount; column++) {
+                [fields addObject:@{
+                    @"kind" : WDFieldKind(row, column),
+                    @"width" : @(docwebhub_form_field_width(row, column)),
+                }];
+            }
+            NSArray *widths = WDWidths(fields, width - 2 * WD_INSET, 10);
+            CGFloat x = WD_INSET;
+            for (int column = 0; column < fieldCount; column++) {
+                CGFloat fieldWidth = [widths[column] doubleValue];
+                CGFloat height = WDFieldHeight(WDFieldKind(row, column));
+                WDCreateField(row, column, kind,
+                              NSMakeRect(x, y + (26 - height) / 2, fieldWidth, height), controller, footer);
+                x += fieldWidth + 10;
+            }
+            y += 30;
+        } else if ([kind isEqualToString:@"hint"]) {
+            for (int column = 0; column < fieldCount; column++) {
+                WDCreateField(row, column, kind,
+                              NSMakeRect(WD_INSET, y, width - 2 * WD_INSET, 16), controller, footer);
+            }
+        }
+    }
+    return y;
+}
+
+// ---- Layout and rebuild --------------------------------------------------
+
+static void WDLayoutChrome(void) {
+    if (docWebHubWindow == nil) {
+        return;
+    }
+    NSRect bounds = [[docWebHubWindow contentView] bounds];
+    CGFloat width = bounds.size.width;
+    CGFloat height = bounds.size.height;
+    [WDTabControl setFrame:NSMakeRect(WD_INSET, WD_TAB_TOP, 340, 26)];
+    [WDPageView setFrame:NSMakeRect(WD_INSET, WD_PAGE_TOP, width - 2 * WD_INSET,
+                                    height - WD_PAGE_TOP - WD_FOOTER_HEIGHT)];
+    [WDFooterView setFrame:NSMakeRect(0, height - WD_FOOTER_HEIGHT, width, WD_FOOTER_HEIGHT)];
+}
+
+static void WDSetContentHeight(CGFloat height) {
+    if (docWebHubWindow == nil) {
+        return;
+    }
+    NSRect frame = [docWebHubWindow frame];
+    NSRect content = [[docWebHubWindow contentView] frame];
+    CGFloat chrome = frame.size.height - content.size.height;
+    CGFloat top = NSMaxY(frame);
+    frame.size.height = height + chrome;
+    frame.origin.y = top - frame.size.height;
+    [docWebHubWindow setFrame:frame display:YES animate:NO];
+}
+
+// WDRebuild replaces the page for one group. Only the visible page exists, so a
+// short tab does not inherit the overview's height, and the widgets always
+// match the current language.
+static void WDRebuild(NSString *group) {
+    if (WDPageView == nil) {
+        return;
+    }
+
+    for (NSView *view in [WDPageView subviews]) {
+        [view removeFromSuperview];
+    }
+    for (NSView *view in [WDFooterView subviews]) {
+        [view removeFromSuperview];
+    }
+    [docWebHubFields removeAllObjects];
+    [docWebHubRowLabels removeAllObjects];
+
+    CGFloat width = NSWidth([WDPageView bounds]);
+    CGFloat height = 0;
+    if ([group isEqualToString:@"overview"]) {
+        height = WDBuildOverview(WDPageView, width, nil);
+    } else if ([group isEqualToString:@"language"]) {
+        height = WDBuildLanguageRow(WDPageView, width, nil);
+    } else {
+        height = WDBuildSettingRows(WDPageView, width, group, nil);
+    }
+
+    WDBuildChrome(WDFooterView, NSWidth([WDFooterView bounds]), nil);
+    WDSetContentHeight(WDContentHeightForPage(group, height));
+    WDLayoutChrome();
+    WDRefreshLabels();
+}
+
 void docwebhub_run_gui(void) {
     @autoreleasepool {
         docWebHubFields = [[NSMutableArray alloc] init];
@@ -832,6 +1568,7 @@ void docwebhub_run_gui(void) {
 
         DocWebHubAppDelegate *delegate = [[DocWebHubAppDelegate alloc] init];
         [app setDelegate:delegate];
+
 
         DocWebHubController *controller = [[DocWebHubController alloc] init];
 
@@ -852,173 +1589,70 @@ void docwebhub_run_gui(void) {
         [appMenu addItem:docWebHubAppQuitItem];
         [appMenuItem setSubmenu:appMenu];
 
-        // The settings form is one description rendered natively. Its rows are
-        // laid out top-down; the card is drawn behind the setting rows.
-        int rowCount = docwebhub_form_row_count();
-        int settingCount = 0;
-        for (int row = 0; row < rowCount; row++) {
-            NSString *kind = WDRowString(row, docwebhub_form_row_kind);
-            if ([kind isEqualToString:@"setting"]) {
-                settingCount++;
-            }
-        }
-
-        CGFloat headerY = 24;
-        CGFloat urlY = 130;
-        CGFloat cardY = 174;
-        CGFloat cardHeight = 32 + settingCount * 36;
-        CGFloat hintY = cardY + cardHeight + 22;
-        CGFloat footerY = hintY + 32;
-        CGFloat contentHeight = MAX(500, footerY + 60);
-
-        NSRect contentRect = NSMakeRect(0, 0, 600, contentHeight);
+        NSRect contentRect = NSMakeRect(0, 0, WD_WINDOW_WIDTH, WDMinHeightForGroup(@"overview"));
         NSWindow *window = [[NSWindow alloc] initWithContentRect:contentRect
                                                        styleMask:(NSWindowStyleMaskTitled |
                                                                   NSWindowStyleMaskClosable |
-                                                                  NSWindowStyleMaskMiniaturizable)
+                                                                  NSWindowStyleMaskMiniaturizable |
+                                                                  NSWindowStyleMaskResizable)
                                                          backing:NSBackingStoreBuffered
                                                            defer:NO];
         [window setTitle:WDTitle()];
+        [window setBackgroundColor:WDWindowBackground()];
         [window setReleasedWhenClosed:NO];
+        [window setMinSize:NSMakeSize(WD_WINDOW_MIN_WIDTH, 380)];
+        [window setDelegate:(id<NSWindowDelegate>)controller];
         [window center];
         docWebHubWindow = window;
 
         DocWebHubFlippedView *content =
-            [[DocWebHubFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 600, contentHeight)];
+            [[DocWebHubFlippedView alloc] initWithFrame:NSMakeRect(0, 0, WD_WINDOW_WIDTH,
+                                                                   WDMinHeightForGroup(@"overview"))];
+        [content setAutoresizesSubviews:NO];
         [window setContentView:content];
 
-        if (settingCount > 0) {
-            DocWebHubCard *card =
-                [[DocWebHubCard alloc] initWithFrame:NSMakeRect(24, cardY, 552, cardHeight)];
-            [content addSubview:card];
-        }
+        WDTabControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(WD_INSET, WD_TAB_TOP, 340, 26)];
+        [WDTabControl setSegmentCount:4];
+        [WDTabControl setSegmentStyle:NSSegmentStyleRounded];
+        [WDTabControl setTrackingMode:NSSegmentSwitchTrackingSelectOne];
+        [WDTabControl setFont:[NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium]];
+        [WDTabControl setSelectedSegment:0];
+        [WDTabControl setTarget:controller];
+        [WDTabControl setAction:@selector(tabChanged:)];
+        [content addSubview:WDTabControl];
 
-        int settingIndex = 0;
-        for (int row = 0; row < rowCount; row++) {
-            NSString *rowKind = WDRowString(row, docwebhub_form_row_kind);
-            NSString *rowLabel = WDRowString(row, docwebhub_form_row_label);
-            int fieldCount = docwebhub_form_field_count(row);
+        WDPageView = [[DocWebHubFlippedView alloc] initWithFrame:NSMakeRect(WD_INSET, WD_PAGE_TOP, 600, 400)];
+        [content addSubview:WDPageView];
 
-            if ([rowKind isEqualToString:@"header"]) {
-                for (int column = 0; column < fieldCount; column++) {
-                    NSString *kind = WDFieldKind(row, column);
-                    CGFloat y = headerY;
-                    CGFloat height = WDFieldHeight(kind);
-                    if ([kind isEqualToString:@"heading"]) {
-                        y = headerY + 32;
-                    } else if ([kind isEqualToString:@"description"]) {
-                        y = headerY + 70;
-                    }
-                    WDCreateField(row, column, rowKind, NSMakeRect(24, y, 552, height),
-                                  controller, content);
-                }
-                continue;
-            }
+        WDFooterView = [[DocWebHubFooterView alloc] initWithFrame:NSMakeRect(0, 400, WD_WINDOW_WIDTH,
+                                                                             WD_FOOTER_HEIGHT)];
+        [content addSubview:WDFooterView];
 
-            if ([rowKind isEqualToString:@"url"]) {
-                NSMutableArray *fields = [NSMutableArray array];
-                for (int column = 0; column < fieldCount; column++) {
-                    NSString *kind = WDFieldKind(row, column);
-                    [fields addObject:@{
-                        @"kind": kind,
-                        @"width": @(docwebhub_form_field_width(row, column)),
-                    }];
-                }
-                NSArray *widths = WDWidths(fields, 552, 10);
-                CGFloat x = 24;
-                for (int column = 0; column < fieldCount; column++) {
-                    CGFloat width = [widths[column] doubleValue];
-                    CGFloat height = WDFieldHeight(WDFieldKind(row, column));
-                    CGFloat y = urlY + (30 - height) / 2;
-                    WDCreateField(row, column, rowKind, NSMakeRect(x, y, width, height),
-                                  controller, content);
-                    x += width + 10;
-                }
-                continue;
-            }
+        WDLayoutChrome();
+        WDRebuild(@"overview");
 
-            if ([rowKind isEqualToString:@"setting"]) {
-                CGFloat rowY = cardY + 16 + settingIndex * 36;
-                if (rowLabel.length > 0) {
-                    NSTextField *label =
-                        WDLabel(rowLabel, NSMakeRect(40, rowY + 9, 76, 18), 12,
-                                [NSColor secondaryLabelColor], NO);
-                    [label setLineBreakMode:NSLineBreakByClipping];
-                    [content addSubview:label];
-                    [docWebHubRowLabels addObject:@{@"row": @(row), @"control": label}];
-                }
-
-                NSMutableArray *fields = [NSMutableArray array];
-                for (int column = 0; column < fieldCount; column++) {
-                    NSString *kind = WDFieldKind(row, column);
-                    [fields addObject:@{
-                        @"kind": kind,
-                        @"width": @(docwebhub_form_field_width(row, column)),
-                    }];
-                }
-                NSArray *widths = WDWidths(fields, 428, 12);
-                CGFloat x = 132;
-                for (int column = 0; column < fieldCount; column++) {
-                    CGFloat width = [widths[column] doubleValue];
-                    NSString *kind = WDFieldKind(row, column);
-                    CGFloat height = WDFieldHeight(kind);
-                    CGFloat y = rowY + (36 - height) / 2;
-                    if ([kind isEqualToString:@"spacer"]) {
-                        x += width + 12;
-                        continue;
-                    }
-                    WDCreateField(row, column, rowKind, NSMakeRect(x, y, width, height),
-                                  controller, content);
-                    x += width + 12;
-                }
-                settingIndex++;
-                continue;
-            }
-
-            if ([rowKind isEqualToString:@"hint"]) {
-                CGFloat x = 24;
-                for (int column = 0; column < fieldCount; column++) {
-                    CGFloat width = 552;
-                    WDCreateField(row, column, rowKind, NSMakeRect(x, hintY, width, 16),
-                                  controller, content);
-                }
-                continue;
-            }
-
-            if ([rowKind isEqualToString:@"footer"]) {
-                if (rowLabel.length > 0) {
-                    NSTextField *label =
-                        WDLabel(rowLabel, NSMakeRect(24, footerY + 6, 76, 18), 12,
-                                [NSColor secondaryLabelColor], NO);
-                    [label setLineBreakMode:NSLineBreakByTruncatingTail];
-                    [content addSubview:label];
-                    [docWebHubRowLabels addObject:@{@"row": @(row), @"control": label}];
-                }
-
-                NSMutableArray *fields = [NSMutableArray array];
-                for (int column = 0; column < fieldCount; column++) {
-                    [fields addObject:@{
-                        @"kind": WDFieldKind(row, column),
-                        @"width": @(docwebhub_form_field_width(row, column)),
-                    }];
-                }
-                NSArray *widths = WDWidths(fields, 472, 12);
-                CGFloat x = 104;
-                for (int column = 0; column < fieldCount; column++) {
-                    CGFloat width = [widths[column] doubleValue];
-                    NSString *kind = WDFieldKind(row, column);
-                    if ([kind isEqualToString:@"spacer"]) {
-                        x += width + 12;
-                        continue;
-                    }
-                    CGFloat height = WDFieldHeight(kind);
-                    CGFloat y = footerY + (30 - height) / 2;
-                    WDCreateField(row, column, rowKind, NSMakeRect(x, y, width, height),
-                                  controller, content);
-                    x += width + 12;
-                }
-            }
-        }
+        // The overview keeps itself current: two seconds is fast enough that a
+        // colleague opening a page shows up while the window is still open, and
+        // cheap enough to run forever.
+        [NSTimer scheduledTimerWithTimeInterval:2.0
+                                        repeats:YES
+                                          block:^(NSTimer *timer) {
+                                              (void)timer;
+                                              if (docWebHubWindow == nil || ![docWebHubWindow isVisible]) {
+                                                  return;
+                                              }
+                                              docwebhub_form_refresh_stats();
+                                              for (NSDictionary *field in [docWebHubFields copy]) {
+                                                  NSString *kind = field[@"kind"];
+                                                  if ([kind isEqualToString:@"stat"] ||
+                                                      [kind isEqualToString:@"badge"] ||
+                                                      [kind isEqualToString:@"device-list"] ||
+                                                      [kind isEqualToString:@"file-list"] ||
+                                                      [kind isEqualToString:@"sparkline"]) {
+                                                      WDApplyField(field, YES);
+                                                  }
+                                              }
+                                          }];
 
         // Menu bar icon: after the window is closed the user can restore it or quit from here.
         docWebHubStatusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
@@ -1041,8 +1675,6 @@ void docwebhub_run_gui(void) {
         NSMenu *statusMenu = [[NSMenu alloc] init];
         WDBuildMenu(statusMenu, controller);
         [docWebHubStatusItem setMenu:statusMenu];
-
-        WDRefreshLabels();
 
         [window makeKeyAndOrderFront:nil];
         // Nothing should start focused: the port field would otherwise show a

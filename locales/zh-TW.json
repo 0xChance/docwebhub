@@ -131,5 +131,19 @@
   "web.office.page": "第 %d 頁",
   "web.office.pages": "頁面縮圖",
   "web.office.zoomIn": "放大",
-  "web.office.zoomOut": "縮小"
+  "web.office.zoomOut": "縮小",
+  "ui.overview.uptime": "已執行",
+  "ui.overview.devices": "裝置",
+  "ui.overview.online": "線上",
+  "ui.overview.requests": "今日請求",
+  "ui.overview.files": "共享檔案",
+  "ui.overview.devices.title": "最近存取的裝置",
+  "ui.overview.hourly": "每小時請求",
+  "ui.overview.recent": "最近開啟",
+  "ui.overview.empty": "尚無資料",
+  "ui.overview.now": "剛剛",
+  "ui.tab.overview": "分析",
+  "ui.tab.settings": "設定",
+  "ui.tab.security": "安全",
+  "ui.tab.language": "語言"
 }

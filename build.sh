@@ -28,6 +28,9 @@ if [ ${#targets[@]} -eq 0 ]; then
 fi
 
 mkdir -p "$OUT_DIR"
+# Packing changes into a staging directory, so every path that is used after
+# that point has to be absolute.
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
 # The Office viewer is compiled into the binary, so its assets have to exist
 # before the first go build. The script is idempotent and caches its downloads;
@@ -49,6 +52,8 @@ else
     ./tools/fetch-cad-viewer.sh
     CAD_TAGS="cad"
 fi
+
+archives=()
 
 for target in "${targets[@]}"; do
     os="${target%%/*}"
@@ -79,6 +84,17 @@ for target in "${targets[@]}"; do
             cgo=1
             if [ "$HOST_OS" != "linux" ]; then
                 echo "error: building Linux targets requires a Linux host (cgo, GTK 3, Ayatana AppIndicator 3)" >&2
+                exit 1
+            fi
+            # cgo ties the binary to the C toolchain's architecture, not just
+            # its operating system. Without this check the build falls through
+            # to the host gcc, which then fails hundreds of lines deep with
+            # "no such instruction" from the target's assembly.
+            if [ "$arch" != "$HOST_ARCH" ]; then
+                echo "error: building linux/$arch on a $HOST_ARCH host is a cross build" >&2
+                echo "       it needs a $arch C toolchain plus $arch GTK 3 and Ayatana" >&2
+                echo "       AppIndicator development files, which this script does not set up." >&2
+                echo "       Build on a $arch machine, or in a $arch container." >&2
                 exit 1
             fi
             # The tray icon is a StatusNotifier item. GTK 3 alone is not enough:
@@ -182,41 +198,107 @@ PLIST
         echo "    bundled ${bundle}"
     fi
 
-    # Windows artifacts also get a zip so they are easy to hand out.
-    if [ "$os" = "windows" ]; then
-        if command -v zip >/dev/null 2>&1; then
-            archive="${name}${ext}.zip"
-            echo "    packaged ${OUT_DIR}/${archive}"
-            ( cd "$OUT_DIR" && rm -f "$archive" && zip -q -9 -X "$archive" "${name}${ext}" )
-        else
-            echo "    skipped zip: zip not found" >&2
-        fi
-    fi
-
     # Linux builds also get a desktop entry; Terminal=false keeps a terminal from
     # popping up when the app is launched from a file manager.
     if [ "$os" = "linux" ]; then
         desktop="${OUT_DIR}/docwebhub.desktop"
-        exec_path="$(cd "$(dirname "$output")" && pwd)/$(basename "$output")"
-
-        icon_entry=""
         if [ -f assets/docwebhub.png ]; then
             cp assets/docwebhub.png "${OUT_DIR}/docwebhub.png"
-            icon_entry="Icon=$(cd "$OUT_DIR" && pwd)/docwebhub.png"
         fi
 
+        # Placeholders, not this machine's paths. The file ships inside the zip
+        # next to the binary, and .desktop cannot use a path relative to
+        # itself, so whoever installs it has to fill these in. See
+        # docs/packaging.md.
         cat > "$desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=docWebHub
 Comment=Local static site preview
-Exec="${exec_path}"
-${icon_entry}
+Exec=/path/to/docwebhub
+Icon=/path/to/docwebhub.png
 Terminal=false
 Categories=Development;
 DESKTOP
-        echo "    wrote ${desktop} (Exec/Icon point at local build paths; edit as needed)"
+        echo "    wrote ${desktop} (Exec/Icon are placeholders; edit after unzipping)"
     fi
+
+    # ---- packaging -------------------------------------------------------
+    # One zip per platform and architecture, named so the file is still
+    # identifiable after it leaves the release page:
+    #   docwebhub-<version>-<platform>-<arch>.zip
+    # "macos" rather than Go's "darwin": the name is for whoever downloads it.
+    platform="$os"
+    if [ "$os" = "darwin" ]; then
+        platform="macos"
+    fi
+    archive="${OUT_DIR}/docwebhub-${VERSION}-${platform}-${arch}.zip"
+
+    case "$os" in
+        darwin)
+            # ditto, not zip: a .app is a bundle whose symlinks and permission
+            # bits zip(1) would flatten, leaving an app macOS refuses to start.
+            if command -v ditto >/dev/null 2>&1; then
+                rm -f "$archive"
+                ditto -c -k --keepParent "$bundle" "$archive"
+                archives+=("$archive")
+                echo "    packaged ${archive}"
+            else
+                echo "    skipped zip: ditto not found" >&2
+            fi
+            ;;
+        *)
+            if ! command -v zip >/dev/null 2>&1; then
+                echo "    skipped zip: zip not found" >&2
+            else
+                # The binary loses its platform suffix inside the zip: the
+                # archive name already says which platform it is.
+                stage="${OUT_DIR}/.pack-${os}-${arch}"
+                rm -rf "$stage"
+                mkdir -p "$stage"
+                case "$os" in
+                    linux)
+                        cp "$output" "$stage/docwebhub"
+                        chmod +x "$stage/docwebhub"
+                        cp "${OUT_DIR}/docwebhub.desktop" "$stage/docwebhub.desktop"
+                        files="docwebhub docwebhub.desktop"
+                        if [ -f "${OUT_DIR}/docwebhub.png" ]; then
+                            cp "${OUT_DIR}/docwebhub.png" "$stage/docwebhub.png"
+                            files="$files docwebhub.png"
+                        fi
+                        ;;
+                    windows)
+                        cp "$output" "$stage/docwebhub.exe"
+                        files="docwebhub.exe"
+                        ;;
+                esac
+                ( cd "$stage" && rm -f "$archive" && zip -q -9 -X "$archive" $files )
+                rm -rf "$stage"
+                archives+=("$archive")
+                echo "    packaged ${archive}"
+            fi
+            ;;
+    esac
 done
+
+# One checksum file for everything this run produced. macOS has no sha256sum,
+# so fall back to shasum; a machine with neither simply skips it.
+if [ ${#archives[@]} -gt 0 ]; then
+    hashcmd=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        hashcmd="sha256sum"
+    elif command -v shasum >/dev/null 2>&1; then
+        hashcmd="shasum -a 256"
+    fi
+    if [ -n "$hashcmd" ]; then
+        : > "$OUT_DIR/SHA256SUMS"
+        for a in "${archives[@]}"; do
+            ( cd "$OUT_DIR" && $hashcmd "$(basename "$a")" ) >> "$OUT_DIR/SHA256SUMS"
+        done
+        echo "==> wrote ${OUT_DIR}/SHA256SUMS"
+    else
+        echo "    skipped checksums: neither sha256sum nor shasum found" >&2
+    fi
+fi
 
 echo "done. output: $OUT_DIR"

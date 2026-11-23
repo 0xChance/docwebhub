@@ -131,5 +131,19 @@
   "web.office.page": "第 %d 页",
   "web.office.pages": "页面缩略图",
   "web.office.zoomIn": "放大",
-  "web.office.zoomOut": "缩小"
+  "web.office.zoomOut": "缩小",
+  "ui.overview.uptime": "已运行",
+  "ui.overview.devices": "设备",
+  "ui.overview.online": "在线",
+  "ui.overview.requests": "今日请求",
+  "ui.overview.files": "共享文件",
+  "ui.overview.devices.title": "最近访问的设备",
+  "ui.overview.hourly": "每小时请求",
+  "ui.overview.recent": "最近打开",
+  "ui.overview.empty": "暂无数据",
+  "ui.overview.now": "刚刚",
+  "ui.tab.overview": "分析",
+  "ui.tab.settings": "设置",
+  "ui.tab.security": "安全",
+  "ui.tab.language": "语言"
 }

@@ -49,17 +49,32 @@ func formFieldByID(t *testing.T, c *formController, id string) formField {
 func TestFormShape(t *testing.T) {
 	c := newTestForm(t, nil)
 
-	if got := len(c.form.rows); got != 9 {
-		t.Fatalf("rows = %d, want 9", got)
+	// header, stats, badges, devices, hourly, recent, url, root, port, bind,
+	// auth, auth-status, hint, footer(language)
+	if got := len(c.form.rows); got != 14 {
+		t.Fatalf("rows = %d, want 14", got)
 	}
-	wantFieldCounts := []int{3, 2, 2, 2, 2, 3, 1, 1, 3}
+	wantFieldCounts := []int{3, 2, 3, 1, 1, 1, 2, 2, 2, 2, 3, 1, 1, 1}
 	for i, want := range wantFieldCounts {
 		if got := len(c.form.rows[i].fields); got != want {
 			t.Errorf("row %d (%s) has %d fields, want %d", i, c.form.rows[i].id, got, want)
 		}
 	}
-	if c.form.rows[2].kind != "setting" || c.form.rows[2].label != "Folder" {
-		t.Fatalf("root row = %+v", c.form.rows[2])
+	// Every row belongs to a tab, and the four tabs are all present.
+	seen := map[string]bool{}
+	for _, row := range c.form.rows {
+		if row.group == "" {
+			t.Errorf("row %q has no group", row.id)
+		}
+		seen[row.group] = true
+	}
+	for _, want := range []string{groupOverview, groupSettings, groupSecurity, groupLanguage, groupChrome} {
+		if !seen[want] {
+			t.Errorf("no row in group %q", want)
+		}
+	}
+	if c.form.rows[7].kind != "setting" || c.form.rows[7].label != "Folder" {
+		t.Fatalf("root row = %+v", c.form.rows[7])
 	}
 	if field := formFieldByID(t, c, "url"); field.kind != kindLink || field.value != "http://127.0.0.1:9101" {
 		t.Fatalf("url field = %+v", field)
@@ -235,8 +250,14 @@ func TestLanguageActionReloadsLabels(t *testing.T) {
 	if c.language != "zh-CN" {
 		t.Fatalf("language = %q", c.language)
 	}
-	if got := c.form.rows[3].label; got != i18n.T("ui.port.label") {
-		t.Fatalf("port row label = %q", got)
+	var portLabel string
+	for _, row := range c.form.rows {
+		if row.id == "port" {
+			portLabel = row.label
+		}
+	}
+	if portLabel != i18n.T("ui.port.label") {
+		t.Fatalf("port row label = %q", portLabel)
 	}
 	if got := formFieldByID(t, c, "bind").options[0].label; got != i18n.T("ui.bind.local") {
 		t.Fatalf("bind option label = %q", got)

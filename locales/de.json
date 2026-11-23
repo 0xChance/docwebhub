@@ -131,5 +131,19 @@
   "web.office.page": "Seite %d",
   "web.office.pages": "Seitenvorschauen",
   "web.office.zoomIn": "Vergrößern",
-  "web.office.zoomOut": "Verkleinern"
+  "web.office.zoomOut": "Verkleinern",
+  "ui.overview.uptime": "Läuft seit",
+  "ui.overview.devices": "Geräte",
+  "ui.overview.online": "online",
+  "ui.overview.requests": "Anfragen heute",
+  "ui.overview.files": "geteilte Dateien",
+  "ui.overview.devices.title": "Letzte Geräte",
+  "ui.overview.hourly": "Anfragen pro Stunde",
+  "ui.overview.recent": "Zuletzt geöffnet",
+  "ui.overview.empty": "Noch keine Daten",
+  "ui.overview.now": "gerade",
+  "ui.tab.overview": "Aktivität",
+  "ui.tab.settings": "Einstellungen",
+  "ui.tab.security": "Zugriff",
+  "ui.tab.language": "Sprache"
 }

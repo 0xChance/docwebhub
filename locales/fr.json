@@ -131,5 +131,19 @@
   "web.office.page": "Page %d",
   "web.office.pages": "Vignettes des pages",
   "web.office.zoomIn": "Zoom avant",
-  "web.office.zoomOut": "Zoom arrière"
+  "web.office.zoomOut": "Zoom arrière",
+  "ui.overview.uptime": "Actif depuis",
+  "ui.overview.devices": "Appareils",
+  "ui.overview.online": "en ligne",
+  "ui.overview.requests": "requêtes aujourd’hui",
+  "ui.overview.files": "fichiers partagés",
+  "ui.overview.devices.title": "Appareils récents",
+  "ui.overview.hourly": "Requêtes par heure",
+  "ui.overview.recent": "Ouverts récemment",
+  "ui.overview.empty": "Pas encore de données",
+  "ui.overview.now": "à l’instant",
+  "ui.tab.overview": "Activité",
+  "ui.tab.settings": "Réglages",
+  "ui.tab.security": "Accès",
+  "ui.tab.language": "Langue"
 }

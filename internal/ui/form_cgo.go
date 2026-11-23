@@ -77,6 +77,16 @@ func docwebhub_form_row_kind(row C.int) *C.char {
 	return formCString(form.rows[index].kind)
 }
 
+//export docwebhub_form_row_group
+func docwebhub_form_row_group(row C.int) *C.char {
+	form := currentForm()
+	index := int(row)
+	if form == nil || index < 0 || index >= len(form.rows) {
+		return formCString("")
+	}
+	return formCString(form.rows[index].group)
+}
+
 //export docwebhub_form_row_label
 func docwebhub_form_row_label(row C.int) *C.char {
 	form := currentForm()
@@ -287,6 +297,16 @@ func docwebhub_form_menu_separator(index C.int) C.int {
 		return 1
 	}
 	return 0
+}
+
+//export docwebhub_form_refresh_stats
+func docwebhub_form_refresh_stats() {
+	c := activeForm
+	if c == nil || c.opts.RefreshStats == nil {
+		return
+	}
+	c.opts.Stats = c.opts.RefreshStats()
+	c.rebuild()
 }
 
 //export docwebhub_text
